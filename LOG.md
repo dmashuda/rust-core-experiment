@@ -312,3 +312,32 @@ Findings:
   The fix in `.bazelrc` is `--macos_minimum_os`, `--host_macos_minimum_os` and
   `--(host_)action_env=MACOSX_DEPLOYMENT_TARGET=14.0`. Set these on day one:
   changing `--action_env` invalidates every cached action.
+
+## 6. Milestone (bonus): iOS app from the same SwiftUI module
+
+```
+bazel build //apps/ios:CalculatorIOS                    # simulator .ipa (default on Apple Silicon)
+bazel build --config=ios_device //apps/ios:CalculatorIOS  # needs provisioning_profile
+```
+
+- **Built on the first try for the simulator.** `//apps/ios` is about 20
+  lines: an `@main` App plus `ios_application`, reusing
+  `//apps/apple/CalculatorUI`. rules_apple's transition switched the platform
+  to `ios_sim_arm64`, and rules_rust picked the `aarch64-apple-ios-sim`
+  toolchain from `extra_target_triples` with no further config. Verified:
+  `LC_BUILD_VERSION platform 7` (iOS Simulator), `minos 17.0`, and 103
+  `uniffi_calc_ffi_fn*` symbols linked in.
+- **Device:** `ios_application` fails at *analysis* without
+  `provisioning_profile` ("Building for device, but no provisioning_profile
+  attribute was set"). The toolchain itself works:
+  `bazel build //apps/apple/CalculatorUI --platforms=@apple_support//platforms:ios_arm64`
+  compiles the Rust core and Swift for `aarch64-apple-ios`. Only signing
+  remains, either a `.mobileprovision` checked in or fetched, or
+  `local_provisioning_profile` from rules_apple.
+- Not run: no iOS Simulator *runtime* is installed (`xcrun simctl list runtimes`
+  is empty, and `xcodebuild -downloadPlatform iOS` is a multi-GB download).
+  The same applies to `ios_unit_test`. The macOS snapshot test already
+  covers the shared SwiftUI code.
+- Cost note: each Apple platform (macOS, iOS sim, iOS device) is a separate
+  configuration, so the Rust core plus uniffi are compiled once per
+  platform. A remote cache matters more as platforms are added.

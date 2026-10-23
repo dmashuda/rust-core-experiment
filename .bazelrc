@@ -20,3 +20,7 @@ common --macos_minimum_os=14.0
 common --host_macos_minimum_os=14.0
 common --action_env=MACOSX_DEPLOYMENT_TARGET=14.0
 common --host_action_env=MACOSX_DEPLOYMENT_TARGET=14.0
+
+# iOS targets. rules_apple defaults to the simulator matching the host CPU.
+build:ios_sim --ios_multi_cpus=sim_arm64
+build:ios_device --ios_multi_cpus=arm64
