@@ -3,3 +3,4 @@
 .DS_Store
 user.bazelrc
 .claude/settings.local.json
+node_modules/

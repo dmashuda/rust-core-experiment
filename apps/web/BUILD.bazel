@@ -1,0 +1,55 @@
+load("@aspect_rules_esbuild//esbuild:defs.bzl", "esbuild")
+load("@aspect_rules_js//js:defs.bzl", "js_binary")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
+load("@bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+
+# Type-check only; esbuild does the transpiling and bundling below.
+ts_project(
+    name = "typecheck",
+    srcs = glob(["src/**/*.ts"]),
+    no_emit = True,
+    tsconfig = "tsconfig.json",
+    deps = ["//bindings/wasm:calc_wasm_js"],
+)
+
+esbuild(
+    name = "bundle",
+    srcs = glob(["src/**/*.ts"]),
+    entry_point = "src/main.ts",
+    format = "esm",
+    minify = True,
+    output = "main.js",
+    target = "es2022",
+    deps = ["//bindings/wasm:calc_wasm_js"],
+)
+
+# The deployable site: everything flattened into one directory.
+copy_to_directory(
+    name = "site",
+    srcs = [
+        "index.html",
+        "style.css",
+        ":bundle",
+        "//bindings/wasm:calc_wasm_bindgen",
+    ],
+    # Only the .wasm is needed at runtime; calc.js is already inside main.js.
+    exclude_srcs_patterns = [
+        "**/*.d.ts",
+        "**/calc.js",
+        "**/snippets/**",
+        "**/*.map",
+    ],
+    replace_prefixes = {
+        "apps/web/": "",
+        "bindings/wasm/calc_wasm_bindgen/": "",
+    },
+    visibility = ["//visibility:public"],
+)
+
+# `bazel run //apps/web:serve` then open http://localhost:8080
+js_binary(
+    name = "serve",
+    args = ["$(rootpath :site)"],
+    data = [":site"],
+    entry_point = "//tools/serve",
+)

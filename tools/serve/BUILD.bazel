@@ -1,0 +1,9 @@
+load("@aspect_rules_js//js:defs.bzl", "js_library")
+
+# rules_js copies sources into bazel-bin per package, so cross-package JS
+# must go through a js_library rather than a bare file label.
+js_library(
+    name = "serve",
+    srcs = ["serve.mjs"],
+    visibility = ["//visibility:public"],
+)

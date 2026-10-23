@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rust Calculator</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="calc">
+      <output id="expr" class="expr" aria-live="polite"></output>
+      <output id="result" class="result">0</output>
+      <div id="keys" class="keys"></div>
+      <ol id="history" class="history"></ol>
+      <p class="footer">Evaluated by Rust compiled to WebAssembly</p>
+    </main>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

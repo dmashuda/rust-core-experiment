@@ -2,3 +2,6 @@ common --enable_platform_specific_config
 
 # Pick up per-user overrides last.
 try-import %workspace%/user.bazelrc
+
+# Optimised builds (wasm drops from ~240 KB to ~105 KB).
+build:release --compilation_mode=opt

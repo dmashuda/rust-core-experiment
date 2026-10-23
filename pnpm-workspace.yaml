@@ -1,0 +1,6 @@
+packages:
+  - "."
+
+# rules_js turns npm lifecycle scripts into Bazel actions and insists they be
+# allow-listed explicitly. Nothing here needs a postinstall.
+onlyBuiltDependencies: []

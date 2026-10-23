@@ -1,0 +1,4 @@
+load("@npm//:defs.bzl", "npm_link_all_packages")
+
+# Makes //:node_modules/<pkg> targets for everything in pnpm-lock.yaml.
+npm_link_all_packages(name = "node_modules")

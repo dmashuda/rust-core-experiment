@@ -122,3 +122,76 @@ downloading the toolchain.
   rustc passes deployment target 11.0, while Bazel's auto-configured host C
   toolchain targets the running OS. To revisit after registering
   apple_support's toolchain.
+
+## 3. Milestone: web app (Rust to wasm to TypeScript), all in Bazel
+
+```
+bazel test //...                      # core tests, wasm binding test in Node, tsc typecheck
+bazel run //apps/web:serve            # http://localhost:8080
+bazel build --config=release //apps/web:site   # deployable directory
+```
+
+![web app](docs/web.png)
+
+Build graph:
+
+```
+//core/calc_core (rust_library)
+  └─ //bindings/wasm:calc_wasm (rust_shared_library, target_compatible_with wasm32)
+       └─ :calc_wasm_bindgen (rust_wasm_bindgen, target="web")  ── transition to wasm32 platform
+            └─ :calc_wasm_js (js_library: calc.js + calc.d.ts + calc_bg.wasm)
+                 ├─ :calc_wasm_test (js_test: loads real wasm in Node)
+                 └─ //apps/web:typecheck (ts_project, no_emit)  + :bundle (esbuild)
+                      └─ :site (copy_to_directory) ─ :serve (js_binary)
+```
+
+Findings:
+
+- **wasm-bindgen worked first time.** No `--platforms` flag is needed:
+  `rust_wasm_bindgen`'s transition builds the `rust_shared_library` for
+  wasm32. Adding `target_compatible_with = ["@platforms//cpu:wasm32"]` to the
+  library means `bazel build //...` skips it in the host config instead of
+  failing.
+- **Cold cost: the wasm-bindgen CLI is compiled from source** (wasmparser,
+  walrus and so on), about 100 s once and cached after that. A remote cache
+  would hide this.
+- **wasm size: 241 KB fastbuild, 105 KB `-c opt`.** Added
+  `build:release --compilation_mode=opt`. `wasm-opt` (binaryen) is not wired
+  in; that is the next size win, and there is no BCR module for it, so it
+  would be an `http_archive` of the binaryen release.
+- `--target web` + `init({ module_or_path })` keeps the wasm out of the JS
+  bundle. esbuild bundles `calc.js` into `main.js`, while `copy_to_directory`
+  places `calc_bg.wasm` beside it. The app passes an explicit URL, so the
+  bundler never has to understand `new URL(..., import.meta.url)`.
+- The dev server must send `Content-Type: application/wasm`, or
+  `WebAssembly.instantiateStreaming` rejects the file. wasm-bindgen falls
+  back to a slower path with a console warning. `tools/serve/serve.mjs` is a
+  zero-dependency Node server run by `js_binary` on the hermetic Node
+  toolchain. Because it serves the runfiles tree, a `bazel build` updates it
+  live with no restart.
+
+rules_js / rules_ts gotchas, each of which cost one build cycle:
+
+1. **pnpm lifecycle allowlist is mandatory.** rules_js 3 fails unless
+   `onlyBuiltDependencies` (pnpm < 10.26) or `allowBuilds` (pnpm >= 10.26) is
+   set in `pnpm-workspace.yaml`, even if empty. Pass the workspace file in
+   `npm_translate_lock(data = [...])`.
+2. **Sources must live in the consuming package.** rules_js and rules_ts copy
+   sources into `bazel-bin` per package. A `tsconfig.json` or `.mjs` from
+   another package fails with "Expected to find file X in //a, but instead it
+   is in //b". The fix is to keep the tsconfig next to its `ts_project`, and
+   to share JS across packages only through `js_library`.
+3. **rules_ts validates attrs against the tsconfig.** `no_emit = True` on the
+   rule requires `"noEmit": true` in the JSON, and the same applies to
+   `declaration` and similar options.
+4. `aspect_bazel_lib` was renamed to **`bazel_lib`** (3.x), so
+   `copy_to_directory` is at `@bazel_lib//lib:copy_to_directory.bzl`.
+5. Generated wasm-bindgen outputs live in `bazel-bin`. TypeScript imports them
+   by relative path (`../../../bindings/wasm/calc_wasm_bindgen/calc.js`)
+   because rules_ts and esbuild run with the bin directory as the root, where
+   sources and generated files are merged. That is the main mental-model
+   shift from a normal JS repo.
+
+Verified in headless Chrome (driven over the DevTools protocol):
+`2 * (3 + 4) ^ 2` gives 98, then `ans / 7` gives 14, with history rendered,
+and `1/0` surfaces Rust's `DivisionByZero` as a JS exception message.
