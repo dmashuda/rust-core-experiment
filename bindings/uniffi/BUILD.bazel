@@ -1,6 +1,7 @@
 load("@rules_apple//apple:macos.bzl", "macos_unit_test")
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_kotlin//kotlin:jvm.bzl", "kt_jvm_library", "kt_jvm_test")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library")
 load("@rules_swift//swift:swift.bzl", "swift_interop_hint", "swift_library")
 
 rust_library(
@@ -32,6 +33,25 @@ genrule(
     tools = [
         ":calc_ffi",
         "//tools/uniffi:uniffi_bindgen_swift",
+    ],
+)
+
+# Kotlin bindings (for Android, and for a host JVM test). Same exec-config
+# trick as the Swift genrule above.
+genrule(
+    name = "calc_ffi_kotlin_gen",
+    srcs = ["uniffi.toml"],
+    outs = ["dev/mashuda/calc/calc_ffi.kt"],
+    cmd = """
+        $(execpath //tools/uniffi:uniffi_bindgen) generate --library \
+            --language kotlin --no-format \
+            --config $(execpath uniffi.toml) \
+            --out-dir $(RULEDIR) \
+            $(execpath :calc_ffi)
+    """,
+    tools = [
+        ":calc_ffi",
+        "//tools/uniffi:uniffi_bindgen",
     ],
 )
 
@@ -75,4 +95,40 @@ macos_unit_test(
     name = "CalcFFITests",
     minimum_os_version = "14.0",
     deps = [":CalcFFITestsLib"],
+)
+
+# Kotlin bindings compiled for the JVM. An Android app would use
+# kt_android_library with the same srcs plus the JNA AAR.
+kt_jvm_library(
+    name = "calc_ffi_kt",
+    srcs = [":calc_ffi_kotlin_gen"],
+    visibility = ["//visibility:public"],
+    deps = ["@maven//:net_java_dev_jna_jna"],
+)
+
+# The same crate as a host shared library, so the JVM test can load it with
+# JNA. (On Android, the NDK-built .so plays this role.)
+rust_shared_library(
+    name = "calc_ffi_shared",
+    srcs = ["src/lib.rs"],
+    compile_data = ["Cargo.toml"],
+    crate_name = "calc_ffi",
+    deps = [
+        "//core/calc_core",
+        "@crates//:uniffi",
+    ],
+)
+
+# Kotlin -> JNA -> Rust on the host JVM: proves the Android binding path
+# without needing the Android SDK/NDK.
+kt_jvm_test(
+    name = "CalcFfiKotlinTest",
+    srcs = ["tests/CalcFfiKotlinTest.kt"],
+    data = [":calc_ffi_shared"],
+    env = {"CALC_FFI_LIB": "$(rootpath :calc_ffi_shared)"},
+    test_class = "dev.mashuda.calc.CalcFfiKotlinTest",
+    deps = [
+        ":calc_ffi_kt",
+        "@maven//:junit_junit",
+    ],
 )

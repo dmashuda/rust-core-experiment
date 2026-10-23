@@ -121,3 +121,23 @@ use_repo(npm, "npm")
 rules_ts_ext = use_extension("@aspect_rules_ts//ts:extensions.bzl", "ext")
 rules_ts_ext.deps(ts_version_from = "//:package.json")
 use_repo(rules_ts_ext, "npm_typescript")
+
+###############################################################################
+# JVM / Kotlin (UniFFI Kotlin bindings; the foundation for Android)
+###############################################################################
+bazel_dep(name = "rules_java", version = "9.9.0")
+bazel_dep(name = "rules_kotlin", version = "2.4.21")
+bazel_dep(name = "rules_jvm_external", version = "7.2")
+
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven.install(
+    artifacts = [
+        # UniFFI's Kotlin bindings call into Rust through JNA.
+        # (On Android use the "net.java.dev.jna:jna:5.17.0@aar" packaging,
+        # which carries libjnidispatch.so for each ABI.)
+        "net.java.dev.jna:jna:5.17.0",
+        "junit:junit:4.13.2",
+    ],
+    repositories = ["https://repo1.maven.org/maven2"],
+)
+use_repo(maven, "maven")

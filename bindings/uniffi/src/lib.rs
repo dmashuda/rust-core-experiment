@@ -8,9 +8,13 @@ use std::sync::Mutex;
 uniffi::setup_scaffolding!();
 
 /// Surfaces as a Swift `Error` / Kotlin exception.
+///
+/// The field is deliberately not called `message`: in Kotlin every error
+/// variant becomes an exception subclass, and a `message` field collides with
+/// `Throwable.message` ("overload resolution ambiguity").
 #[derive(Debug, uniffi::Error)]
 pub enum CalcError {
-    Invalid { message: String },
+    Invalid { reason: String },
 }
 
 impl std::error::Error for CalcError {}
@@ -18,14 +22,14 @@ impl std::error::Error for CalcError {}
 impl std::fmt::Display for CalcError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CalcError::Invalid { message } => f.write_str(message),
+            CalcError::Invalid { reason } => f.write_str(reason),
         }
     }
 }
 
 impl From<calc_core::CalcError> for CalcError {
     fn from(e: calc_core::CalcError) -> Self {
-        CalcError::Invalid { message: e.to_string() }
+        CalcError::Invalid { reason: e.to_string() }
     }
 }
 

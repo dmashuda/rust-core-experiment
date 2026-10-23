@@ -1,0 +1,12 @@
+# Passed to uniffi-bindgen via --config. UniFFI 0.32 "global config" format:
+# per-crate settings live under [crates.<crate_name>]. (A uniffi.toml next to
+# the crate is only auto-discovered via `cargo metadata`, which we disable.)
+
+[crates.calc_ffi.bindings.kotlin]
+package_name = "dev.mashuda.calc"
+# Name JNA loads (lib<name>.so / .dylib). Must be explicit: the default is
+# derived from the input library's filename, and rules_rust rlibs carry a
+# hash suffix (libcalc_ffi-1523509694.rlib). On Android this must match the
+# packaged .so; note android_binary merges all native deps into
+# lib<android_binary name>.so.
+cdylib_name = "calc_ffi"

@@ -35,8 +35,8 @@ public final class CalculatorModel {
             history = calculator.history().reversed()
             expression = ""
             isError = false
-        } catch CalcError.Invalid(let message) {
-            display = message
+        } catch CalcError.Invalid(let reason) {
+            display = reason
             isError = true
         } catch {
             display = "\(error)"

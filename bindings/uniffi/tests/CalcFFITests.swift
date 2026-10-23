@@ -10,10 +10,10 @@ final class CalcFFITests: XCTestCase {
 
     func testErrorsBecomeSwiftErrors() {
         XCTAssertThrowsError(try evaluate(expression: "1 / 0")) { error in
-            guard case CalcError.Invalid(let message) = error else {
+            guard case CalcError.Invalid(let reason) = error else {
                 return XCTFail("unexpected error \(error)")
             }
-            XCTAssertEqual(message, "division by zero")
+            XCTAssertEqual(reason, "division by zero")
         }
     }
 

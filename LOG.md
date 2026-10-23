@@ -341,3 +341,94 @@ bazel build --config=ios_device //apps/ios:CalculatorIOS  # needs provisioning_p
 - Cost note: each Apple platform (macOS, iOS sim, iOS device) is a separate
   configuration, so the Rust core plus uniffi are compiled once per
   platform. A remote cache matters more as platforms are added.
+
+## 7. Milestone: Kotlin bindings proven on the host JVM (Android groundwork)
+
+No Android SDK or NDK is installed on this machine (no `ANDROID_HOME`,
+nothing in `~/Library/Android`). Installing several GB of SDK was out of
+scope for this run. Instead I proved everything up to APK packaging:
+
+```
+bazel test //bindings/uniffi:CalcFfiKotlinTest   # Kotlin -> JNA -> Rust (host .dylib), 3 JUnit tests
+```
+
+```
+//tools/uniffi:uniffi_bindgen (generic CLI)            → //bindings/uniffi:calc_ffi_kotlin_gen (calc_ffi.kt)
+//bindings/uniffi:calc_ffi_kt (kt_jvm_library + JNA from rules_jvm_external)
+//bindings/uniffi:calc_ffi_shared (rust_shared_library → libcalc_ffi.dylib)
+//bindings/uniffi:CalcFfiKotlinTest (kt_jvm_test; finds the dylib via $(rootpath))
+```
+
+Findings:
+
+- **Kotlin generation also works from the rlib.** The CLI docs say
+  "cdylib", but library mode only needs the metadata symbols.
+- **UniFFI 0.32 changed `--config`.** It now expects a *global* config with
+  `[defaults]`, `[crates.<name>]` or `[crate-roots]`. An old flat
+  `uniffi.toml` is ignored with only a warning, so the setting silently has no
+  effect. With `cargo-metadata` disabled, a `uniffi.toml` next to the crate is
+  never auto-discovered either. Pass `--config` explicitly, keyed by crate:
+  `[crates.calc_ffi.bindings.kotlin]`.
+- **Set `cdylib_name` explicitly.** The default is derived from the input
+  file name, and rules_rust rlibs are hash-suffixed
+  (`libcalc_ffi-1523509694.rlib`), so the generated loader asked JNA for
+  `calc_ffi-1523509694`. `rust_shared_library` outputs are *not* hashed
+  (`libcalc_ffi.dylib`).
+- **Never name a UniFFI error field `message`.** Swift accepted it. Kotlin
+  failed with "overload resolution ambiguity", because error variants become
+  `Exception` subclasses and the field collides with `Throwable.message`.
+  Renamed to `reason`. Lesson: compile the bindings for *every* language in
+  CI, not just the one you are working on.
+- The JVM test points UniFFI at the Bazel-built dylib through the
+  generated hook `System.setProperty("uniffi.component.calc_ffi.libraryOverride", path)`,
+  using a path from `env = {"CALC_FFI_LIB": "$(rootpath ...)"}`. The same hook
+  is the cleanest fix for the Android `.so` naming problem below.
+
+## 8. Research: what Android will take (not built)
+
+Pieces and versions (BCR, today):
+
+| Need | Module | Notes |
+| --- | --- | --- |
+| Android rules | `rules_android` 0.8.0 | Required for Bazel 9, which removed the native `android_*` rules. Reads the SDK from `ANDROID_HOME`. Toolchains: `register_toolchains("@androidsdk//:sdk-toolchain", "@androidsdk//:all")`. README: Bazel 7.7+, 8.5+ or 9+ (8.0–8.4.2 unsupported due to `flag_alias`). |
+| NDK C toolchain | `rules_android_ndk` 0.1.5 | Reads a *local* NDK (r25b+) from `ANDROID_NDK_HOME`; it does not download one. `register_toolchains("@androidndk//:all")`. |
+| Kotlin | `rules_kotlin` 2.4.21 | `kt_android_library`. Already in MODULE for the JVM test. |
+| JNA | `rules_jvm_external` 7.2 | Use `net.java.dev.jna:jna:5.17.0@aar`, which bundles `libjnidispatch.so` per ABI. |
+| Rust | `rules_rust` | Add `aarch64-linux-android`, `x86_64-linux-android` to `extra_target_triples` (crate_universe already lists them). rules_rust links with the NDK clang chosen by C toolchain resolution. |
+
+The planned graph mirrors Apple:
+
+```
+android_binary(name = "calc_android", deps = [":app_lib"])        --android_platforms=//platforms:android_arm64,//platforms:android_x86_64
+  └─ kt_android_library(":app_lib", srcs = MainActivity.kt, deps = [":calc_ffi_android_kt", "//bindings/uniffi:calc_ffi_ccdeps"])
+       ├─ kt_android_library(":calc_ffi_android_kt", srcs = [kotlin gen with android = true], deps = ["@maven//:net_java_dev_jna_jna" (aar)])
+       └─ cc_library(deps = ["//bindings/uniffi:calc_ffi"])  ← rust_library via CcInfo, same as Apple
+```
+
+Gotchas found in the sources, to verify when building:
+
+1. **`android_binary` merges all native deps into one `.so`.** rules_android's
+   `native_deps.bzl` links every `CcInfo` dependency into
+   `lib<android_binary name>.so`, not `libcalc_ffi.so`. UniFFI's Kotlin
+   loader asks JNA for `cdylib_name`. Two fixes: set `cdylib_name` to the
+   `android_binary` name, or, preferably, keep one bindings artifact and call
+   `System.setProperty("uniffi.component.calc_ffi.libraryOverride", "<binary name>")`
+   in `Application.onCreate` before first use. The
+   `disable_fallback_native_deps_linking` feature appears to switch merging
+   off; untested.
+2. **Generate a separate Kotlin variant for Android.** The Kotlin config has
+   `android = true` (`android_cleaner`), which uses `android.system.SystemCleaner`.
+   That class is absent on a desktop JVM, so produce two genrule outputs from
+   two `[crates.calc_ffi.bindings.kotlin]` configs: JVM for tests and Android
+   for the app.
+3. The allocator-shim flag already in `.bazelrc` is required here too: the
+   NDK linker, not rustc, links the rlibs.
+4. With R8/minify, add keep rules for `com.sun.jna.**` and the generated
+   package, because JNA binds by reflection.
+5. Jetpack Compose under rules_kotlin needs the Compose compiler plugin wired
+   as a `kt_compiler_plugin`. For a POC, classic Views avoid that entirely.
+6. `--android_platforms` (not `--platforms`) drives the multi-ABI split. Define
+   `platform()`s with `@platforms//os:android` plus a CPU.
+
+Estimated effort once the SDK/NDK are installed is a few hours. The binding
+layer, the hardest part, is already proven by `CalcFfiKotlinTest`.
