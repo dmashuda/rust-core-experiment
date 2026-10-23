@@ -11,3 +11,12 @@ build:release --compilation_mode=opt
 # (__rust_alloc, __rust_no_alloc_shim_is_unstable...) that rustc would
 # normally emit only when it links the final binary itself.
 common --@rules_rust//rust/settings:experimental_use_allocator_libraries_with_mangled_symbols=True
+
+# One macOS deployment target for everything built for the host (tools, tests).
+# Without this the Apple CC toolchain targets the *running* OS (27.0) while
+# rustc assumes 11.0, and every Rust link warns
+# "overriding '-mmacosx-version-min=11.0.0' with '-target arm64-apple-macosx27.0'".
+common --macos_minimum_os=14.0
+common --host_macos_minimum_os=14.0
+common --action_env=MACOSX_DEPLOYMENT_TARGET=14.0
+common --host_action_env=MACOSX_DEPLOYMENT_TARGET=14.0

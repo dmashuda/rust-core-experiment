@@ -266,3 +266,49 @@ Aside: on first use, the `aspect_*` rulesets print a notice that they collect
 anonymous ruleset-usage telemetry. Opt out with
 `common --repo_env=DO_NOT_TRACK=1` in `.bazelrc`. I left it as the default;
 it is your call.
+
+## 5. Milestone: macOS SwiftUI app on the Rust core
+
+```
+bazel run //apps/macos:CalculatorMac                     # builds the .app and launches it
+bazel test //apps/apple/CalculatorUI:CalculatorUITests   # model test + offscreen snapshot
+```
+
+![macOS view, rendered by the snapshot test](docs/macos.png)
+
+Layout:
+
+```
+//apps/apple/CalculatorUI   swift_library: SwiftUI CalculatorView + @Observable model (shared with iOS later)
+//apps/macos                swift_library (@main App) + macos_application
+```
+
+Findings:
+
+- **The app itself built on the first try** once the bindings worked. The
+  Rust code reaches the final link transitively through
+  `swift_library → cc_library → rust_library (CcInfo)`, so app targets never
+  mention Rust. The result is a 2.5 MB (fastbuild) thin arm64 `.app`,
+  ad-hoc signed by rules_apple. `otool -L` shows no Rust dylib; the core is
+  statically linked.
+- rules_apple's transition produces a separate output config
+  (`darwin_arm64-fastbuild-macos-arm64-min14.0-ST-<hash>`), so the Rust core
+  is compiled again for the app's platform and minimum OS. Expect one Rust
+  build per distinct Apple platform/min-OS combination. That is correct, but
+  it costs time.
+- **Verifying a GUI without a screen.** The terminal had no Screen Recording
+  permission, so `screencapture` could not grab the window. Instead,
+  `CalculatorUITests` renders the real `CalculatorView` with SwiftUI's
+  `ImageRenderer` and writes a PNG to `$TEST_UNDECLARED_OUTPUTS_DIR`, which
+  ends up in `bazel-testlogs/.../test.outputs/`. This works headless in CI and
+  doubles as a cheap snapshot test. The same test drives `CalculatorModel`
+  (keypresses → Rust → display/history/error).
+- `macos_unit_test` first-run time is about 30 s (xctest host startup plus
+  SwiftUI). Later runs are cached.
+- **Deployment-target mismatch, fixed.** Without a configured minimum, the
+  apple_support toolchain targets the *running* OS (macOS 27) while rustc
+  assumes 11.0, so every Rust link warned
+  `overriding '-mmacosx-version-min=11.0.0' option with '-target arm64-apple-macosx27.0'`.
+  The fix in `.bazelrc` is `--macos_minimum_os`, `--host_macos_minimum_os` and
+  `--(host_)action_env=MACOSX_DEPLOYMENT_TARGET=14.0`. Set these on day one:
+  changing `--action_env` invalidates every cached action.

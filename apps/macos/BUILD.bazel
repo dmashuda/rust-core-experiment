@@ -1,0 +1,18 @@
+load("@rules_apple//apple:macos.bzl", "macos_application")
+load("@rules_swift//swift:swift.bzl", "swift_library")
+
+swift_library(
+    name = "CalculatorAppLib",
+    srcs = ["CalculatorApp.swift"],
+    deps = ["//apps/apple/CalculatorUI"],
+)
+
+# `bazel run //apps/macos:CalculatorMac` builds the .app and launches it.
+macos_application(
+    name = "CalculatorMac",
+    bundle_id = "dev.mashuda.rustcalc",
+    bundle_name = "RustCalculator",
+    infoplists = ["Info.plist"],
+    minimum_os_version = "14.0",
+    deps = [":CalculatorAppLib"],
+)

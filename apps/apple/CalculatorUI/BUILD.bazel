@@ -1,0 +1,25 @@
+load("@rules_apple//apple:macos.bzl", "macos_unit_test")
+load("@rules_swift//swift:swift.bzl", "swift_library")
+
+# SwiftUI views + view model shared by the macOS and iOS apps. Depends only on
+# the UniFFI Swift module; the Rust code arrives transitively via CcInfo.
+swift_library(
+    name = "CalculatorUI",
+    srcs = glob(["Sources/*.swift"]),
+    module_name = "CalculatorUI",
+    visibility = ["//apps:__subpackages__"],
+    deps = ["//bindings/uniffi:CalcFFI"],
+)
+
+swift_library(
+    name = "CalculatorUITestsLib",
+    testonly = True,
+    srcs = glob(["tests/*.swift"]),
+    deps = [":CalculatorUI"],
+)
+
+macos_unit_test(
+    name = "CalculatorUITests",
+    minimum_os_version = "14.0",
+    deps = [":CalculatorUITestsLib"],
+)
