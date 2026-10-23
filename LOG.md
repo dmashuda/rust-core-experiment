@@ -9,6 +9,49 @@ to anyone repeating this.
 
 ---
 
+## TL;DR (2026-10-23)
+
+**It works.** One `rust_library` feeds a web app (wasm), a macOS app and an
+iOS app (Swift via UniFFI). The Kotlin bindings for Android compile and pass
+tests on the JVM. All of it runs under one `bazel test //...` (6 test
+targets, green from a fresh clone).
+
+The ten things that mattered most:
+
+1. Bazel 9 is bzlmod-only, and C/C++/ObjC rules must be `load()`ed from
+   `rules_cc`. Put `apple_support` *above* `rules_cc` in `MODULE.bazel`.
+2. A `rust_library` provides `CcInfo`, so Swift and Android consume Rust
+   like any C library. The app targets never mention Rust.
+3. When a non-Rust linker links rlibs, set
+   `--@rules_rust//rust/settings:experimental_use_allocator_libraries_with_mangled_symbols=True`.
+4. wasm: use `rules_rust_wasm_bindgen`'s *own* `wasm_bindgen` crate, because
+   the crate and CLI versions must match exactly. The rule transitions to
+   wasm32 for you.
+5. UniFFI in Bazel: build the bindgen from source with
+   `default-features = false` (no `cargo metadata`). Give the proc-macros a
+   stub `Cargo.toml` via `compile_data`. Run library mode on the rlib in
+   the **exec** configuration. Pin the runtime and bindgen to the same
+   version.
+6. UniFFI 0.32 `--config` expects `[crates.<name>]` sections, and an old
+   flat file is silently ignored. Set `cdylib_name` explicitly, since rules_rust
+   rlib names are hash-suffixed.
+7. Do not name UniFFI error fields `message` (Kotlin breaks while Swift is
+   fine). Compile every binding language in CI.
+8. rules_js/rules_ts: sources must live in the consuming package (share
+   through `js_library`). An `onlyBuiltDependencies` allowlist is mandatory,
+   and the tsconfig must agree with rule attributes.
+9. `swift_test` relies on xcode-select symlinks that may not exist, so use
+   rules_apple `macos_unit_test`. SwiftUI's `ImageRenderer` gives headless
+   UI snapshots.
+10. Pin `--macos_minimum_os` and `MACOSX_DEPLOYMENT_TARGET` in `.bazelrc` on
+    day one: changing `--action_env` later invalidates the whole cache.
+
+Not done: running on an iOS simulator (no runtime installed), a signed
+device build (needs a provisioning profile), and the Android app (no
+SDK/NDK; see section 8 for the concrete plan).
+
+---
+
 ## 0. Environment (2026-10-23)
 
 | Tool | Version |
@@ -432,3 +475,10 @@ Gotchas found in the sources, to verify when building:
 
 Estimated effort once the SDK/NDK are installed is a few hours. The binding
 layer, the hardest part, is already proven by `CalcFfiKotlinTest`.
+
+## 9. Fresh-clone check
+
+A fresh `git clone` to a different path ran `bazel test //...` and
+`bazel build //...` successfully. Every action was a cache hit from the
+machine's shared Bazel cache. That also shows action keys do not depend on
+the checkout location: no absolute paths leak into actions.
