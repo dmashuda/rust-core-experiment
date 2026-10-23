@@ -1,0 +1,4 @@
+common --enable_platform_specific_config
+
+# Pick up per-user overrides last.
+try-import %workspace%/user.bazelrc

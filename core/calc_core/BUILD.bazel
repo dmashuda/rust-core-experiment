@@ -1,0 +1,14 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+# Pure Rust business logic. No FFI, no platform code: every front end
+# reaches this through a thin binding crate under //bindings.
+rust_library(
+    name = "calc_core",
+    srcs = glob(["src/**/*.rs"]),
+    visibility = ["//visibility:public"],
+)
+
+rust_test(
+    name = "calc_core_test",
+    crate = ":calc_core",
+)

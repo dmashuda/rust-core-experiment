@@ -1,0 +1,5 @@
+/bazel-*
+/target
+.DS_Store
+user.bazelrc
+.claude/settings.local.json
