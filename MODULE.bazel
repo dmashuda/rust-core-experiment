@@ -2,10 +2,15 @@
 
 module(name = "rust_core_experiment")
 
+# apple_support must come before rules_cc: Bazel picks the first registered
+# C/C++ toolchain, and only apple_support's can target iOS/macOS properly.
+bazel_dep(name = "apple_support", version = "2.10.1")
 bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "bazel_skylib", version = "1.9.2")
 bazel_dep(name = "rules_cc", version = "0.2.27")
 bazel_dep(name = "rules_rust", version = "0.74.0")
+bazel_dep(name = "rules_swift", version = "4.2.2")
+bazel_dep(name = "rules_apple", version = "5.3.1")
 
 ###############################################################################
 # Rust toolchain
@@ -27,6 +32,64 @@ rust.toolchain(
 use_repo(rust, "rust_toolchains")
 
 register_toolchains("@rust_toolchains//:all")
+
+###############################################################################
+# Third-party crates (crate_universe, no Cargo.toml: specs live here)
+#
+# Two separate repos so the bindgen CLI's heavy deps (clap, askama, goblin...)
+# never get feature-unified into the library that ships inside the apps.
+# UniFFI's runtime and bindgen must be the *same* version: the bindgen reads
+# metadata the runtime macros embed in the compiled library.
+###############################################################################
+UNIFFI_VERSION = "=0.32.2"
+
+# Every triple some front end compiles Rust for (plus Linux for CI).
+CRATE_TRIPLES = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-apple-ios",
+    "aarch64-apple-ios-sim",
+    "aarch64-linux-android",
+    "x86_64-linux-android",
+    "wasm32-unknown-unknown",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+
+# Runtime deps linked into app binaries.
+crate.spec(
+    default_features = False,
+    package = "uniffi",
+    repositories = ["crates"],
+    version = UNIFFI_VERSION,
+)
+crate.from_specs(
+    name = "crates",
+    supported_platform_triples = CRATE_TRIPLES,
+)
+
+# Build-time tools (run on the exec platform only).
+# default_features = False drops `cargo-metadata`, so the bindgen never tries
+# to shell out to `cargo metadata` (impossible inside a Bazel sandbox).
+crate.spec(
+    default_features = False,
+    features = ["cli"],
+    package = "uniffi",
+    repositories = ["tool_crates"],
+    version = UNIFFI_VERSION,
+)
+crate.from_specs(
+    name = "tool_crates",
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+    ],
+)
+use_repo(crate, "crates", "tool_crates")
 
 ###############################################################################
 # Web: wasm-bindgen. Ships its CLI *and* a version-matched wasm-bindgen crate

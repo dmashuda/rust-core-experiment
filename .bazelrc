@@ -5,3 +5,9 @@ try-import %workspace%/user.bazelrc
 
 # Optimised builds (wasm drops from ~240 KB to ~105 KB).
 build:release --compilation_mode=opt
+
+# Required when a non-Rust linker (Swift/clang via rules_apple, or the
+# Android NDK) links Rust rlibs: rules_rust supplies the allocator shim
+# (__rust_alloc, __rust_no_alloc_shim_is_unstable...) that rustc would
+# normally emit only when it links the final binary itself.
+common --@rules_rust//rust/settings:experimental_use_allocator_libraries_with_mangled_symbols=True

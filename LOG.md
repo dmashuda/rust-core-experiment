@@ -195,3 +195,74 @@ rules_js / rules_ts gotchas, each of which cost one build cycle:
 Verified in headless Chrome (driven over the DevTools protocol):
 `2 * (3 + 4) ^ 2` gives 98, then `ans / 7` gives 14, with history rendered,
 and `1/0` surfaces Rust's `DivisionByZero` as a JS exception message.
+
+## 4. Milestone: UniFFI Swift bindings generated and tested in Bazel
+
+```
+bazel test //bindings/uniffi:CalcFFITests   # XCTest: Swift -> generated bindings -> Rust
+```
+
+Build graph:
+
+```
+@tool_crates//:uniffi (features=["cli"], no default features)
+  └─ //tools/uniffi:uniffi_bindgen_swift (rust_binary, exec cfg)
+//bindings/uniffi:calc_ffi (rust_library, #[uniffi::export])
+  ├─ :calc_ffi_swift_gen (genrule; rlib + bindgen in `tools` → exec cfg)
+  │     → calc_ffi.swift, calc_ffiFFI.h
+  ├─ :calc_ffiFFI (cc_library: header + deps=[calc_ffi]; swift_interop_hint module_name)
+  └─ :CalcFFI (swift_library: generated .swift; `import CalcFFI` in app code)
+```
+
+Findings, in the order they bit:
+
+1. **UniFFI proc-macros read `Cargo.toml` at compile time.** On stable Rust,
+   `uniffi_macros` learns the crate's module path by parsing `[package].name`
+   from `$CARGO_MANIFEST_DIR/Cargo.toml`. With nightly it uses
+   `TokenStream::expand_expr` instead. rules_rust sets `CARGO_MANIFEST_DIR` to
+   the Bazel package but there is no manifest there, so compilation fails
+   with `failed to open file .../Cargo.toml`. **Fix:** a 2-line stub
+   `Cargo.toml` (`[package] name = "calc_ffi"`) in `compile_data`. The name
+   must equal the `rust_library` crate name.
+2. **Library mode works on the `.rlib`.** No `rust_static_library` or cdylib
+   is needed for Swift generation: `uniffi-bindgen-swift` finds the
+   `UNIFFI_META_*` symbols inside the rlib's object files.
+3. **Generate the bindings in the exec configuration.** Listing the rlib in
+   the genrule's `tools` (not `srcs`) builds it for the host. The Swift/C
+   output is target-independent, so one generation serves macOS, iOS device
+   and iOS simulator, and you avoid cross-platform tool problems such as
+   reading an iOS-arch library on the host.
+4. **Allocator shim link error.** When Swift/clang (not rustc) does the final
+   link, you get `Undefined symbols: __rustc..___rust_alloc_zeroed,
+   ___rust_no_alloc_shim_is_unstable_v2...`. rustc only emits the allocator
+   shim when it links the final artifact. **Fix:** in `.bazelrc`,
+   `--@rules_rust//rust/settings:experimental_use_allocator_libraries_with_mangled_symbols=True`,
+   which makes rules_rust supply the shim as a library. The same flag appears
+   in rules_rust's own `examples/ios/.bazelrc`. This will matter for Android
+   too, where the NDK linker links Rust.
+5. **rules_swift 4 dropped the `tags = ["swift_module=..."]` convention.** To
+   give a `cc_library` a specific Clang module name (the generated Swift does
+   `#if canImport(calc_ffiFFI) import calc_ffiFFI`), use
+   `swift_interop_hint(module_name = "calc_ffiFFI")` attached through
+   `aspect_hints`. The generated `.modulemap` is not needed; rules_swift
+   synthesizes one.
+6. **`swift_test` fails at runtime on this machine:**
+   `dyld: Library not loaded: @rpath/libXCTestSwiftSupport.dylib`. rules_swift
+   hardcodes test rpaths to xcode-select's symlinks
+   (`/private/var/select/developer_dir`, `/var/db/xcode_select_link`; see
+   `_DEVELOPER_DIR_SYMLINKS` in `xcode_swift_toolchain.bzl`). Neither exists
+   until someone runs `sudo xcode-select -s ...`. **Workaround:**
+   `macos_unit_test` from rules_apple, which runs the `.xctest` bundle through
+   `xcrun xctest` and works on a stock machine. (Running
+   `sudo xcode-select -s /Applications/Xcode.app` would probably also fix
+   `swift_test`. That is a CI-image gotcha worth remembering.)
+7. **Two crate_universe repos.** `@crates` (runtime, linked into apps) and
+   `@tool_crates` (the bindgen CLI with clap, askama, goblin and so on) both
+   pin `uniffi = "=0.32.2"` with `default_features = False`. Keeping them
+   separate stops Cargo feature unification from linking the CLI's
+   dependency tree into the shipping library.
+
+Aside: on first use, the `aspect_*` rulesets print a notice that they collect
+anonymous ruleset-usage telemetry. Opt out with
+`common --repo_env=DO_NOT_TRACK=1` in `.bazelrc`. I left it as the default;
+it is your call.

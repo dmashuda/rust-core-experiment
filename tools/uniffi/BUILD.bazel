@@ -1,0 +1,10 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+# UniFFI's Swift binding generator, built from source so its version always
+# matches the `uniffi` runtime crate (see UNIFFI_VERSION in MODULE.bazel).
+rust_binary(
+    name = "uniffi_bindgen_swift",
+    srcs = ["uniffi_bindgen_swift.rs"],
+    visibility = ["//visibility:public"],
+    deps = ["@tool_crates//:uniffi"],
+)

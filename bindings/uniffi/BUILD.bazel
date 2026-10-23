@@ -1,0 +1,78 @@
+load("@rules_apple//apple:macos.bzl", "macos_unit_test")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_swift//swift:swift.bzl", "swift_interop_hint", "swift_library")
+
+rust_library(
+    name = "calc_ffi",
+    srcs = ["src/lib.rs"],
+    # Stub manifest read by UniFFI's proc-macros; see the comment inside it.
+    compile_data = ["Cargo.toml"],
+    deps = [
+        "//core/calc_core",
+        "@crates//:uniffi",
+    ],
+)
+
+# Run uniffi-bindgen-swift in library mode against the compiled rlib.
+# The rlib is listed in `tools`, so it is built for the *exec* platform: the
+# generated Swift/C is platform-independent, so one generation serves macOS,
+# iOS device and iOS simulator builds alike.
+genrule(
+    name = "calc_ffi_swift_gen",
+    outs = [
+        "calc_ffi.swift",
+        "calc_ffiFFI.h",
+    ],
+    cmd = """
+        $(execpath //tools/uniffi:uniffi_bindgen_swift) \
+            --swift-sources --headers \
+            $(execpath :calc_ffi) $(RULEDIR)
+    """,
+    tools = [
+        ":calc_ffi",
+        "//tools/uniffi:uniffi_bindgen_swift",
+    ],
+)
+
+# The C half: generated header + the Rust code itself. rust_library provides
+# CcInfo, so linking it here pulls the Rust objects (and std) into whatever
+# Apple binary ends up depending on this.
+cc_library(
+    name = "calc_ffiFFI",
+    hdrs = ["calc_ffiFFI.h"],
+    aspect_hints = [":calc_ffiFFI_interop"],
+    deps = [":calc_ffi"],
+)
+
+# The generated Swift does `import calc_ffiFFI`; this names the Clang module.
+swift_interop_hint(
+    name = "calc_ffiFFI_interop",
+    module_name = "calc_ffiFFI",
+)
+
+# The Swift half: what app code imports (`import CalcFFI`).
+swift_library(
+    name = "CalcFFI",
+    srcs = ["calc_ffi.swift"],
+    module_name = "CalcFFI",
+    visibility = ["//visibility:public"],
+    deps = [":calc_ffiFFI"],
+)
+
+# Swift calling into Rust. macos_unit_test (rules_apple) rather than
+# swift_test (rules_swift): swift_test hardcodes rpaths to xcode-select's
+# symlinks (/var/db/xcode_select_link...), which do not exist unless someone
+# has run `sudo xcode-select -s`; macos_unit_test runs via `xcrun xctest`.
+swift_library(
+    name = "CalcFFITestsLib",
+    testonly = True,
+    srcs = ["tests/CalcFFITests.swift"],
+    deps = [":CalcFFI"],
+)
+
+macos_unit_test(
+    name = "CalcFFITests",
+    minimum_os_version = "14.0",
+    deps = [":CalcFFITestsLib"],
+)
