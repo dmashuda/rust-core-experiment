@@ -1,5 +1,7 @@
 # rust-core-experiment
 
+[![CI](https://github.com/dmashuda/rust-core-experiment/actions/workflows/ci.yml/badge.svg)](https://github.com/dmashuda/rust-core-experiment/actions/workflows/ci.yml)
+
 A Bazel 9 monorepo where one Rust core powers a web app, a macOS app, an iOS
 app and an Android app. Everything is built and tested
 by Bazel. All behaviour, including UI state, lives in Rust; each app only
@@ -26,8 +28,24 @@ apps/android            renderer: Kotlin (plain Views) + android_binary; Rust sh
 | `bazel run //apps/web:serve` | Web app on http://localhost:8080 |
 | `bazel run //apps/macos:CalculatorMac` | Build and launch the macOS app |
 | `bazel build //apps/ios:CalculatorIOS` | iOS simulator `.ipa` |
-| `bazel build //apps/android:calc_android` | Android APK (arm64-v8a); `adb install -r bazel-bin/apps/android/calc_android.apk` |
+| `bazel build //apps/android:calc_android` | Android APK (arm64-v8a); `adb install -r bazel-bin/apps/android/calc_android.apk`. Build that target on its own: `bazel build //...` repoints `bazel-bin` at a configuration the APK is not in |
 | `bazel build --config=release //apps/web:site` | Optimized web bundle (~125 KB wasm; only `opt` minifies the JS) |
+
+### Checks
+
+```sh
+bazel test //...                                      # everything in the table above
+bazel run @rules_rust//tools/rustfmt                  # apply .rustfmt.toml
+bazel run @rules_rust//tools/rust_analyzer:gen_rust_project   # rust-project.json for IDEs
+
+bazel build --aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect \
+    --output_groups=clippy_checks //core/... //bindings/... //tools/...
+bazel build --aspects=@rules_rust//rust:defs.bzl%rustfmt_aspect \
+    --output_groups=rustfmt_checks //core/... //bindings/... //tools/...
+```
+
+CI (`.github/workflows/ci.yml`) runs all of those on Linux and macOS, which is
+also what keeps the hermeticity claims below honest.
 
 Requirements: bazelisk. Bazel downloads Rust, Node, the JDK and (on Linux)
 a hermetic LLVM C/C++ toolchain, so a Linux box needs no compiler at all.
@@ -38,3 +56,7 @@ and are skipped elsewhere. See LOG.md sections 13–15.
 | Web | macOS (offscreen snapshot test) | Android (emulator) |
 | --- | --- | --- |
 | <img src="docs/web.png" width="240"> | <img src="docs/macos.png" width="240"> | <img src="docs/android.png" width="200"> |
+
+## License
+
+MIT, see [LICENSE](LICENSE).

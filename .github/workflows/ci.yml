@@ -1,0 +1,76 @@
+# Everything here is built and tested by Bazel, so CI is just Bazel. The point
+# of the matrix is the hermeticity claim in LOG.md sections 13-15: on Linux the
+# toolchains (Rust, LLVM, Node, the JDK, the Android SDK/NDK) are all
+# downloaded by Bazel, so a runner with no compiler installed should pass.
+# Apple targets are skipped off macOS by //tools/apple:defs.bzl.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: bazel test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # A cold run builds the hermetic LLVM runtimes from source; the disk cache
+    # below makes later runs much shorter.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # bazelisk ships on GitHub-hosted runners as `bazel` and reads
+      # .bazelversion. This step is first so that an image which ever stops
+      # shipping it fails here, obviously, rather than mid-build.
+      - name: Bazel version
+        run: bazel --version
+
+      - name: Cache Bazel outputs
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ matrix.os }}-${{ hashFiles('MODULE.bazel.lock', 'maven_install.json', 'maven_android_install.json', 'pnpm-lock.yaml') }}
+          restore-keys: |
+            bazel-disk-${{ matrix.os }}-
+
+      - name: Test everything
+        run: bazel test --disk_cache="$HOME/.cache/bazel-disk" //...
+
+      - name: Clippy
+        run: |
+          bazel build --disk_cache="$HOME/.cache/bazel-disk" \
+            --aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect \
+            --output_groups=clippy_checks \
+            //core/... //bindings/... //tools/...
+
+      # The .rustfmt.toml to check against comes from .bazelrc.
+      - name: Rustfmt
+        run: |
+          bazel build --disk_cache="$HOME/.cache/bazel-disk" \
+            --aspects=@rules_rust//rust:defs.bzl%rustfmt_aspect \
+            --output_groups=rustfmt_checks \
+            //core/... //bindings/... //tools/...
+
+      - name: Release web bundle
+        run: bazel build --disk_cache="$HOME/.cache/bazel-disk" --config=release //apps/web:site
+
+      - name: Upload failed test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testlogs-${{ matrix.os }}
+          path: bazel-testlogs/**
+          if-no-files-found: ignore

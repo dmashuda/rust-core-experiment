@@ -181,11 +181,7 @@ impl CalculatorUi {
                 .history()
                 .iter()
                 .rev()
-                .map(|e| HistoryLine {
-                    id: e.id,
-                    expression: e.expression.clone(),
-                    result: e.result.clone(),
-                })
+                .map(|e| HistoryLine { id: e.id, expression: e.expression.clone(), result: e.result.clone() })
                 .collect(),
             caption: "Evaluated by Rust".to_string(),
         }

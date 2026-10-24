@@ -62,12 +62,7 @@ impl From<calc_ui::KeyRow> for KeyRow {
             keys: row
                 .keys
                 .into_iter()
-                .map(|k| KeySpec {
-                    id: k.id,
-                    label: k.label,
-                    style: k.style.into(),
-                    span: k.span,
-                })
+                .map(|k| KeySpec { id: k.id, label: k.label, style: k.style.into(), span: k.span })
                 .collect(),
         }
     }

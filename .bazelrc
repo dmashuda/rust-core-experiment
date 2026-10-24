@@ -1,9 +1,21 @@
 common --enable_platform_specific_config
 
+# Aspect's rulesets report ruleset/version usage home on every build.
+common --repo_env=DO_NOT_TRACK=1
+
+# Only the failing test's output, rather than a pointer to a log file.
+test --test_output=errors
+
+# The formatting the Rust here is committed in. Check with
+#   bazel build --aspects=@rules_rust//rust:defs.bzl%rustfmt_aspect \
+#       --output_groups=rustfmt_checks //core/... //bindings/... //tools/...
+# and apply with `bazel run @rules_rust//tools/rustfmt`.
+common --@rules_rust//rust/settings:rustfmt.toml=//:.rustfmt.toml
+
 # Pick up per-user overrides last.
 try-import %workspace%/user.bazelrc
 
-# Optimised builds (wasm drops from ~240 KB to ~105 KB).
+# Optimised builds (wasm drops from ~240 KB to ~125 KB, and the JS is minified).
 build:release --compilation_mode=opt
 
 # Required when a non-Rust linker (Swift/clang via rules_apple, or the

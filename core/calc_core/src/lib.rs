@@ -15,9 +15,14 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq)]
 pub enum CalcError {
     Empty,
-    UnexpectedChar { ch: char, pos: usize },
+    UnexpectedChar {
+        ch: char,
+        pos: usize,
+    },
     UnexpectedEnd,
-    TrailingInput { pos: usize },
+    TrailingInput {
+        pos: usize,
+    },
     DivisionByZero,
     NotFinite,
     /// Parentheses (or unary minuses) nested deeper than
