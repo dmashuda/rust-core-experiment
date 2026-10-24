@@ -32,6 +32,7 @@ pub struct KeyRow {
 #[wasm_bindgen(getter_with_clone)]
 #[derive(Clone)]
 pub struct HistoryLine {
+    pub id: u64,
     pub expression: String,
     pub result: String,
 }
@@ -43,8 +44,34 @@ pub struct ViewModel {
     #[wasm_bindgen(js_name = isError)]
     pub is_error: bool,
     pub history: Vec<HistoryLine>,
-    pub keypad: Vec<KeyRow>,
     pub caption: String,
+}
+
+impl From<calc_ui::KeyStyle> for KeyStyle {
+    fn from(style: calc_ui::KeyStyle) -> Self {
+        match style {
+            calc_ui::KeyStyle::Input => KeyStyle::Input,
+            calc_ui::KeyStyle::Function => KeyStyle::Function,
+            calc_ui::KeyStyle::Operator => KeyStyle::Operator,
+        }
+    }
+}
+
+impl From<calc_ui::KeyRow> for KeyRow {
+    fn from(row: calc_ui::KeyRow) -> Self {
+        KeyRow {
+            keys: row
+                .keys
+                .into_iter()
+                .map(|k| KeySpec {
+                    id: k.id,
+                    label: k.label,
+                    style: k.style.into(),
+                    span: k.span,
+                })
+                .collect(),
+        }
+    }
 }
 
 impl From<calc_ui::ViewModel> for ViewModel {
@@ -56,31 +83,18 @@ impl From<calc_ui::ViewModel> for ViewModel {
             history: vm
                 .history
                 .into_iter()
-                .map(|h| HistoryLine { expression: h.expression, result: h.result })
-                .collect(),
-            keypad: vm
-                .keypad
-                .into_iter()
-                .map(|row| KeyRow {
-                    keys: row
-                        .keys
-                        .into_iter()
-                        .map(|k| KeySpec {
-                            id: k.id,
-                            label: k.label,
-                            style: match k.style {
-                                calc_ui::KeyStyle::Input => KeyStyle::Input,
-                                calc_ui::KeyStyle::Function => KeyStyle::Function,
-                                calc_ui::KeyStyle::Operator => KeyStyle::Operator,
-                            },
-                            span: k.span,
-                        })
-                        .collect(),
-                })
+                .map(|h| HistoryLine { id: h.id, expression: h.expression, result: h.result })
                 .collect(),
             caption: vm.caption,
         }
     }
+}
+
+/// The keypad. Static, so the renderer asks for it once when it builds the
+/// screen rather than on every keystroke.
+#[wasm_bindgen]
+pub fn keypad() -> Vec<KeyRow> {
+    calc_ui::keypad().into_iter().map(Into::into).collect()
 }
 
 /// The calculator screen.

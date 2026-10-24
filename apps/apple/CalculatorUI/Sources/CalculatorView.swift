@@ -29,9 +29,9 @@ public struct CalculatorView: View {
             .textSelection(.enabled)
 
             Grid(horizontalSpacing: 8, verticalSpacing: 8) {
-                ForEach(vm.keypad.indices, id: \.self) { r in
+                ForEach(model.keypad.indices, id: \.self) { r in
                     GridRow {
-                        ForEach(vm.keypad[r].keys, id: \.id) { key in
+                        ForEach(model.keypad[r].keys, id: \.id) { key in
                             Button { model.press(key.id) } label: {
                                 Text(key.label)
                                     .font(.title2)
@@ -47,7 +47,7 @@ public struct CalculatorView: View {
             if !vm.history.isEmpty {
                 ScrollView {
                     VStack(spacing: 2) {
-                        ForEach(Array(vm.history.enumerated()), id: \.offset) { _, line in
+                        ForEach(vm.history, id: \.id) { line in
                             HStack {
                                 Text(line.expression).foregroundStyle(.secondary)
                                 Spacer()

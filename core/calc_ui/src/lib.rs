@@ -4,6 +4,9 @@
 //! input back through [`CalculatorUi::press`] (on-screen keys) or
 //! [`CalculatorUi::key_input`] (hardware keyboard). Keypad layout, input
 //! editing, evaluation, error state and history all live here.
+//!
+//! The keypad is static, so it comes from [`keypad`] once when a screen is
+//! built. [`ViewModel`] carries only what changes between keystrokes.
 
 use calc_core::Calculator;
 
@@ -39,6 +42,9 @@ pub struct KeyRow {
 /// One history line, newest first in [`ViewModel::history`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryLine {
+    /// Stable for the life of the entry: a renderer keys its row views on
+    /// this, so identity survives newer lines being prepended.
+    pub id: u64,
     pub expression: String,
     pub result: String,
 }
@@ -53,7 +59,6 @@ pub struct ViewModel {
     /// True when `display` holds an error message.
     pub is_error: bool,
     pub history: Vec<HistoryLine>,
-    pub keypad: Vec<KeyRow>,
     /// Footer caption.
     pub caption: String,
 }
@@ -107,6 +112,29 @@ const KEYPAD: &[&[Key]] = &[
     ],
 ];
 
+/// The keypad, row by row. Static: build the keys once when a screen is
+/// created rather than on every keystroke.
+pub fn keypad() -> Vec<KeyRow> {
+    KEYPAD
+        .iter()
+        .map(|row| KeyRow {
+            keys: row
+                .iter()
+                .map(|k| KeySpec {
+                    id: k.id.to_string(),
+                    label: k.label.to_string(),
+                    style: k.style,
+                    span: k.span,
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// Operators that continue from the previous answer when they are the first
+/// thing pressed after `=`, the way a desk calculator does.
+const CONTINUATION_OPERATORS: &[&str] = &["+", "-", "*", "/", "%", "^"];
+
 /// Characters a hardware keyboard may type into the expression. Letters are
 /// allowed so `ans` can be typed.
 fn is_typeable(c: char) -> bool {
@@ -119,6 +147,10 @@ pub struct CalculatorUi {
     expression: String,
     display: String,
     is_error: bool,
+    /// What `display` held before an error replaced it, so editing the
+    /// expression can put it back instead of leaving stale error text on
+    /// screen styled as a normal result.
+    display_before_error: Option<String>,
 }
 
 impl Default for CalculatorUi {
@@ -134,6 +166,7 @@ impl CalculatorUi {
             expression: String::new(),
             display: "0".to_string(),
             is_error: false,
+            display_before_error: None,
         }
     }
 
@@ -148,20 +181,10 @@ impl CalculatorUi {
                 .history()
                 .iter()
                 .rev()
-                .map(|e| HistoryLine { expression: e.expression.clone(), result: e.result.clone() })
-                .collect(),
-            keypad: KEYPAD
-                .iter()
-                .map(|row| KeyRow {
-                    keys: row
-                        .iter()
-                        .map(|k| KeySpec {
-                            id: k.id.to_string(),
-                            label: k.label.to_string(),
-                            style: k.style,
-                            span: k.span,
-                        })
-                        .collect(),
+                .map(|e| HistoryLine {
+                    id: e.id,
+                    expression: e.expression.clone(),
+                    result: e.result.clone(),
                 })
                 .collect(),
             caption: "Evaluated by Rust".to_string(),
@@ -189,8 +212,7 @@ impl CalculatorUi {
                 let mut chars = key.chars();
                 match (chars.next(), chars.next()) {
                     (Some(c), None) if is_typeable(c) => {
-                        self.expression.push(c);
-                        self.is_error = false;
+                        self.insert_text(c.encode_utf8(&mut [0u8; 4]));
                         return Some(self.view());
                     }
                     _ => return None,
@@ -201,30 +223,53 @@ impl CalculatorUi {
         Some(self.view())
     }
 
+    /// Appends `text` to the expression. An operator typed straight after `=`
+    /// continues from the answer, so `6*7=` then `+1=` gives 43.
+    fn insert_text(&mut self, text: &str) {
+        if self.expression.is_empty()
+            && CONTINUATION_OPERATORS.contains(&text)
+            && self.calculator.last_result().is_some()
+        {
+            self.expression.push_str("ans");
+        }
+        self.expression.push_str(text);
+        self.leave_error();
+    }
+
+    /// Leaves error state, restoring the display the error message replaced.
+    fn leave_error(&mut self) {
+        if self.is_error {
+            self.is_error = false;
+            self.display = self.display_before_error.take().unwrap_or_else(|| "0".to_string());
+        }
+    }
+
     fn apply(&mut self, action: Action) {
         match action {
-            Action::Insert(text) => {
-                self.expression.push_str(text);
-                self.is_error = false;
-            }
+            Action::Insert(text) => self.insert_text(text),
             Action::Clear => {
                 // Reset the whole screen like a calculator's C key. History
                 // and `ans` are kept.
                 self.expression.clear();
                 self.display = "0".to_string();
                 self.is_error = false;
+                self.display_before_error = None;
             }
             Action::Backspace => {
                 self.expression.pop();
-                self.is_error = false;
+                self.leave_error();
             }
             Action::Evaluate => match self.calculator.evaluate(&self.expression) {
                 Ok(result) => {
                     self.display = result;
                     self.is_error = false;
+                    self.display_before_error = None;
                     self.expression.clear();
                 }
                 Err(e) => {
+                    if !self.is_error {
+                        self.display_before_error = Some(self.display.clone());
+                    }
                     self.display = e.to_string();
                     self.is_error = true;
                 }
@@ -255,19 +300,6 @@ mod tests {
     }
 
     #[test]
-    fn keypad_rows_fill_the_grid_and_ids_are_unique() {
-        let vm = CalculatorUi::new().view();
-        let mut ids = std::collections::HashSet::new();
-        for row in &vm.keypad {
-            assert_eq!(row.keys.iter().map(|k| k.span).sum::<u32>(), KEYPAD_COLUMNS);
-            for k in &row.keys {
-                assert!(k.span >= 1);
-                assert!(ids.insert(k.id.clone()), "duplicate key id {}", k.id);
-            }
-        }
-    }
-
-    #[test]
     fn keys_build_and_evaluate_an_expression() {
         let mut ui = CalculatorUi::new();
         let vm = press_all(&mut ui, &["2", "*", "(", "3", "+", "4", ")", "^", "2"]);
@@ -287,8 +319,8 @@ mod tests {
         assert_eq!(
             vm.history,
             vec![
-                HistoryLine { expression: "ans/2".into(), result: "21".into() },
-                HistoryLine { expression: "6*7".into(), result: "42".into() },
+                HistoryLine { id: 2, expression: "ans/2".into(), result: "21".into() },
+                HistoryLine { id: 1, expression: "6*7".into(), result: "42".into() },
             ]
         );
     }
@@ -355,6 +387,91 @@ mod tests {
         assert!(ui.key_input("Tab").is_none(), "unknown named keys propagate");
         assert!(ui.key_input("A").is_none(), "uppercase is not typeable");
         assert!(ui.key_input("").is_none());
-        assert_eq!(ui.key_input("=").unwrap().is_error, true, "empty expression is an error");
+        assert!(ui.key_input("=").unwrap().is_error, "empty expression is an error");
+    }
+    #[test]
+    fn editing_after_an_error_restores_the_display() {
+        let mut ui = CalculatorUi::new();
+        press_all(&mut ui, &["1", "/", "0", "evaluate"]);
+        let vm = ui.press("backspace");
+        assert_eq!(vm.display, "0", "no earlier result, so the display goes back to 0");
+        assert!(!vm.is_error);
+
+        let mut ui = CalculatorUi::new();
+        press_all(&mut ui, &["6", "*", "7", "evaluate"]);
+        press_all(&mut ui, &["1", "/", "0", "evaluate"]);
+        assert_eq!(ui.view().display, "division by zero");
+        let vm = ui.press("5");
+        assert_eq!(vm.display, "42", "the last good result comes back; the error text is gone");
+        assert!(!vm.is_error);
+    }
+
+    #[test]
+    fn operators_continue_from_the_last_result() {
+        let mut ui = CalculatorUi::new();
+        press_all(&mut ui, &["6", "*", "7", "evaluate"]);
+        let vm = ui.press("+");
+        assert_eq!(vm.expression, "ans+", "an operator after = continues from the answer");
+        assert_eq!(press_all(&mut ui, &["1", "evaluate"]).display, "43");
+    }
+
+    #[test]
+    fn typed_operators_continue_from_the_last_result() {
+        let mut ui = CalculatorUi::new();
+        for c in "6*7".chars() {
+            ui.key_input(&c.to_string());
+        }
+        ui.key_input("Enter");
+        assert_eq!(ui.key_input("*").unwrap().expression, "ans*");
+    }
+
+    #[test]
+    fn operators_do_not_seed_ans_without_a_previous_answer() {
+        let mut ui = CalculatorUi::new();
+        assert_eq!(ui.press("+").expression, "+");
+        let mut ui = CalculatorUi::new();
+        assert_eq!(press_all(&mut ui, &["1", "+"]).expression, "1+", "mid-expression is untouched");
+    }
+
+    #[test]
+    fn digits_after_a_result_start_a_new_expression() {
+        let mut ui = CalculatorUi::new();
+        press_all(&mut ui, &["6", "*", "7", "evaluate"]);
+        assert_eq!(press_all(&mut ui, &["5"]).expression, "5");
+    }
+
+    #[test]
+    fn the_keypad_is_static_and_not_part_of_the_view_model() {
+        let rows = keypad();
+        let mut ids = std::collections::HashSet::new();
+        for row in &rows {
+            assert_eq!(row.keys.iter().map(|k| k.span).sum::<u32>(), KEYPAD_COLUMNS);
+            for k in &row.keys {
+                assert!(k.span >= 1);
+                assert!(ids.insert(k.id.clone()), "duplicate key id {}", k.id);
+            }
+        }
+        assert!(ids.contains("evaluate"));
+        assert_eq!(keypad(), rows, "the keypad is the same every time: fetch it once");
+    }
+
+    #[test]
+    fn the_view_models_history_is_capped() {
+        let mut ui = CalculatorUi::new();
+        for _ in 0..calc_core::HISTORY_LIMIT + 10 {
+            press_all(&mut ui, &["1", "evaluate"]);
+        }
+        assert_eq!(ui.view().history.len(), calc_core::HISTORY_LIMIT);
+    }
+
+    #[test]
+    fn history_lines_carry_stable_ids() {
+        let mut ui = CalculatorUi::new();
+        press_all(&mut ui, &["1", "evaluate"]);
+        let first = ui.view().history[0].id;
+        press_all(&mut ui, &["2", "evaluate"]);
+        let vm = ui.view();
+        assert_eq!(vm.history[1].id, first, "an older line keeps its id when a newer one is prepended");
+        assert_ne!(vm.history[0].id, first);
     }
 }

@@ -10,5 +10,6 @@ rust_library(
 
 rust_test(
     name = "calc_core_test",
+    size = "small",
     crate = ":calc_core",
 )
