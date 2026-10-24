@@ -1,11 +1,13 @@
 load("@rules_android//rules:rules.bzl", "android_binary")
 load("@rules_kotlin//kotlin:android.bzl", "kt_android_library")
+load("//tools/android:defs.bzl", "ANDROID_TARGET_COMPATIBLE_WITH")
 
 kt_android_library(
     name = "app_lib",
     srcs = glob(["src/**/*.kt"]),
     custom_package = "dev.mashuda.calc.app",
     manifest = "AndroidManifest.xml",
+    target_compatible_with = ANDROID_TARGET_COMPATIBLE_WITH,
     deps = ["//bindings/uniffi:calc_ffi_android_kt"],
 )
 
@@ -14,6 +16,7 @@ kt_android_library(
 android_binary(
     name = "calc_android",
     manifest = "AndroidManifest.xml",
+    target_compatible_with = ANDROID_TARGET_COMPATIBLE_WITH,
     deps = [
         ":app_lib",
         "//bindings/uniffi:calc_ffi_android_native",

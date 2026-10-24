@@ -166,11 +166,10 @@ use_repo(android_sdk_repository_extension, "androidsdk")
 
 register_toolchains("@androidsdk//:sdk-toolchain", "@androidsdk//:all")
 
-android_ndk_repository_extension = use_extension(
-    "@rules_android_ndk//:extension.bzl",
-    "android_ndk_repository_extension",
-)
-use_repo(android_ndk_repository_extension, "androidndk")
+# Wrapped so a missing NDK yields an empty repo instead of failing every
+# build; see tools/android/ndk.bzl.
+optional_android_ndk = use_extension("//tools/android:ndk.bzl", "optional_android_ndk")
+use_repo(optional_android_ndk, "android_ndk_status", "androidndk")
 
 register_toolchains("@androidndk//:all")
 

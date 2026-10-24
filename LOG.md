@@ -693,3 +693,77 @@ Build-system note: rules_apple outputs live under a transitioned config
 the `bazel-bin` symlink follows whichever command ran last. Ask Bazel for the
 real path instead of guessing:
 `bazel cquery --output=files //apps/macos:CalculatorMac`.
+
+## 13. Hermeticity audit, and making the repo build on Linux
+
+Question: how hermetic is this, and could CI run on Linux boxes?
+
+### What Bazel fetches and pins vs. what comes from the host
+
+| Piece | Comes from | Pinned / hermetic? |
+| --- | --- | --- |
+| Bazel | bazelisk + `.bazelversion` (9.3.1) | yes |
+| Rulesets | BCR; `MODULE.bazel.lock` records registry file hashes | yes |
+| Rust toolchain | downloaded by rules_rust (1.98.0) | yes |
+| Rust crates | crate_universe; resolutions + sha256s in `MODULE.bazel.lock` (one "general" entry for all OSes) | yes |
+| wasm-bindgen CLI, uniffi-bindgen | built from source in exec config | yes |
+| Node, npm packages, tsc, esbuild | rules_nodejs download; `pnpm-lock.yaml` integrity hashes | yes |
+| JDK, Kotlin compiler | rules_java remote JDK; rules_kotlin | yes |
+| Maven (JNA, JUnit) | rules_jvm_external, **no `maven_install.json`** | **no**: re-resolved from Maven Central on a fresh machine. Fix: `bazel run @maven//:pin` (and the same for `@maven_android`). |
+| C/C++ toolchain (also links all Rust binaries) | **host**: Xcode clang on macOS (apple_support), system gcc on Linux (rules_cc autoconfig) | **no**. Fix on Linux: `toolchains_llvm` or `hermetic_cc_toolchain` (zig). |
+| Xcode / Apple SDKs | **host** `/Applications/Xcode.app` | **no**. Inherent to Apple; pin the version with `--xcode_version`. |
+| Android SDK + NDK | **host**, `$ANDROID_HOME` / `$ANDROID_NDK_HOME` | **no**. Versions float (the highest installed API level wins). |
+
+### Linux, tested
+
+Stock `ubuntu:24.04` arm64 container plus
+`ca-certificates curl git python3 build-essential unzip zip` and bazelisk.
+That package set is what I installed, not a proven minimum; `build-essential`
+is certainly needed for the host C toolchain.
+
+- **Cold `bazel test //...` took 189 s**, with no remote cache, including
+  downloading every toolchain. The Rust core and view-model tests, the
+  wasm-in-Node test, the tsc typecheck, and the Kotlin → JNA → Rust test
+  (with a Linux `libcalc_ffi.so`) all pass. Cross-OS determinism looks
+  good, but I didn't compare output hashes.
+- Running `bazel build //...` and `bazel test //...` with **no flags**
+  exits 0: 5 tests pass, and the 2 Apple tests plus all Apple and Android
+  targets are reported as SKIPPED.
+
+Two portability bugs were found and fixed on the way:
+
+1. **A missing NDK broke *every* build, even `//core/...`.** rules_android_ndk's
+   extension `fail()`s without `$ANDROID_NDK_HOME`, and because
+   `@androidndk//:all` is a registered toolchain, Bazel fetches it during
+   any C/C++ toolchain resolution. This also hit Macs without Android
+   Studio. Fix: `tools/android/ndk.bzl` wraps the repository rule and
+   creates an empty stub repo when the variable is unset, plus an
+   `@android_ndk_status` repo with a `HAS_ANDROID_NDK` constant.
+   `tools/android/defs.bzl:ANDROID_TARGET_COMPATIBLE_WITH` combines that with
+   rules_android's own `@androidsdk//:has_androidsdk` config_setting, so the
+   Android targets are *skipped*, not failed, without an SDK and NDK.
+2. **Swift targets failed loading on Linux.** rules_swift registers Linux
+   Swift toolchains globally that point at an autodetected `swiftc`. With
+   no Swift installed, `@rules_swift_local_config//:linux-toolchain` doesn't
+   exist, and `bazel test //...` errored ("loading phase errors"; the
+   non-Swift tests only ran under `--keep_going`). Fix:
+   `tools/apple/defs.bzl:APPLE_TARGET_COMPATIBLE_WITH` marks every
+   Swift/Apple target incompatible unless the **host** is macOS. It uses
+   `HOST_CONSTRAINTS` from `@platforms//host:constraints.bzl`, not the
+   target platform, because an iOS build still needs a Mac. Incompatible
+   targets are skipped before toolchain resolution, so the dangling label
+   is never touched.
+
+### What runs where
+
+| Front end | macOS host | Linux host |
+| --- | --- | --- |
+| Rust core, view model, tests | yes | **yes (tested)** |
+| Web (wasm + TS + esbuild) | yes | **yes (tested)** |
+| Kotlin bindings (JVM test) | yes | **yes (tested)** |
+| Android APK | yes | should work on **x86_64 Linux only**. rules_android_ndk only knows the NDK's `linux-x86_64` prebuilt, and Google ships no `linux-aarch64` NDK host tools. Not tested. |
+| macOS / iOS apps | yes | **no, never**. Needs Xcode. The usual pattern is Linux CI for everything else plus macOS runners (or Bazel remote execution on Mac workers) for Apple targets. |
+
+Gotcha: the stock `ubuntu:24.04` image cached on this Mac was **amd64**,
+so it would have run under emulation, and an arm64 bazelisk binary won't
+run in it. Pass `--platform linux/arm64` explicitly.

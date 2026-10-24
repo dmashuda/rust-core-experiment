@@ -4,6 +4,8 @@ load("@rules_kotlin//kotlin:android.bzl", "kt_android_library")
 load("@rules_kotlin//kotlin:jvm.bzl", "kt_jvm_library", "kt_jvm_test")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library")
 load("@rules_swift//swift:swift.bzl", "swift_interop_hint", "swift_library")
+load("//tools/android:defs.bzl", "ANDROID_TARGET_COMPATIBLE_WITH")
+load("//tools/apple:defs.bzl", "APPLE_TARGET_COMPATIBLE_WITH")
 
 rust_library(
     name = "calc_ffi",
@@ -75,6 +77,7 @@ swift_interop_hint(
 # The Swift half: what app code imports (`import CalcFFI`).
 swift_library(
     name = "CalcFFI",
+    target_compatible_with = APPLE_TARGET_COMPATIBLE_WITH,
     srcs = ["calc_ffi.swift"],
     module_name = "CalcFFI",
     visibility = ["//visibility:public"],
@@ -87,6 +90,7 @@ swift_library(
 # has run `sudo xcode-select -s`; macos_unit_test runs via `xcrun xctest`.
 swift_library(
     name = "CalcFFITestsLib",
+    target_compatible_with = APPLE_TARGET_COMPATIBLE_WITH,
     testonly = True,
     srcs = ["tests/CalcFFITests.swift"],
     deps = [":CalcFFI"],
@@ -94,6 +98,7 @@ swift_library(
 
 macos_unit_test(
     name = "CalcFFITests",
+    target_compatible_with = APPLE_TARGET_COMPATIBLE_WITH,
     minimum_os_version = "14.0",
     deps = [":CalcFFITestsLib"],
 )
@@ -143,6 +148,7 @@ kt_android_library(
     name = "calc_ffi_android_kt",
     srcs = [":calc_ffi_kotlin_gen"],
     custom_package = "dev.mashuda.calc",
+    target_compatible_with = ANDROID_TARGET_COMPATIBLE_WITH,
     visibility = ["//visibility:public"],
     deps = ["@maven_android//:net_java_dev_jna_jna"],
 )

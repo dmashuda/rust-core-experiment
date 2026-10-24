@@ -1,8 +1,10 @@
 load("@rules_apple//apple:ios.bzl", "ios_application")
 load("@rules_swift//swift:swift.bzl", "swift_library")
+load("//tools/apple:defs.bzl", "APPLE_TARGET_COMPATIBLE_WITH")
 
 swift_library(
     name = "CalculatorAppLib",
+    target_compatible_with = APPLE_TARGET_COMPATIBLE_WITH,
     srcs = ["CalculatorApp.swift"],
     deps = ["//apps/apple/CalculatorUI"],
 )
@@ -13,6 +15,7 @@ swift_library(
 #             refuses to produce an unsigned device build.
 ios_application(
     name = "CalculatorIOS",
+    target_compatible_with = APPLE_TARGET_COMPATIBLE_WITH,
     bundle_id = "dev.mashuda.rustcalc",
     bundle_name = "RustCalculator",
     families = ["iphone", "ipad"],
