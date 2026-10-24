@@ -656,3 +656,40 @@ Findings:
    the caption text had changed. Lessons: re-run `bazel build` right before
    `adb install`, check the install result, and assert on something that
    proves which build is running.
+
+## 12. Bug fixes: Escape and Delete on the Mac app
+
+Reported from hands-on use of the macOS app, then reproduced with a new test
+(`apps/apple/CalculatorUI/tests/KeyboardTests.swift`). The test hosts the
+real `CalculatorView` in an `NSWindow` and posts genuine `NSEvent` key
+events through `NSApp.sendEvent`. It needs no Accessibility permission, so
+it works headless and in CI, unlike AppleScript or `CGEvent` posting.
+
+1. **"Escape does nothing."** My first guess was wrong: that AppKit routes
+   Escape as `cancelOperation:`, so SwiftUI's `onKeyPress` never sees it,
+   fixed with `.onExitCommand`. The window-hosted test showed `onKeyPress`
+   *does* receive Escape (U+001B) and Rust handled it. The real bug was in
+   `calc_ui`: `Clear` (Escape and the C key) only emptied the expression
+   and left the big display alone. After `6*7 = 42`, pressing Escape left
+   `42` on screen. Clear now resets the display to `0`. History and `ans`
+   survive. Fixed once in Rust, so all four apps changed. Lesson: tests
+   asserted only on `expression` after clear; assert on everything the
+   user sees.
+2. **"Backspace/Delete do nothing" (Mac only).** The Mac "delete" key
+   sends DEL (U+007F, key code 51) and fn+delete sends NSDeleteFunctionKey
+   (U+F728, key code 117). Neither matches SwiftUI's `KeyEquivalent.delete`,
+   so both fell through to "type this character", which Rust rejects. The
+   SwiftUI renderer now maps `.delete`, `.deleteForward`, U+007F and U+F728
+   to `"Backspace"`. The web (`KeyboardEvent.key == "Backspace"`) and Android
+   (`KEYCODE_DEL`) were unaffected.
+
+The view-model split paid off for debugging. Fix 1 was a pure-Rust change
+covered by a Rust unit test. Fix 2 was confined to the renderer's
+native-key-to-string mapping, the one piece of input code each platform
+still owns.
+
+Build-system note: rules_apple outputs live under a transitioned config
+(`bazel-out/darwin_arm64-fastbuild-macos-arm64-min14.0-ST-<hash>/...`), and
+the `bazel-bin` symlink follows whichever command ran last. Ask Bazel for the
+real path instead of guessing:
+`bazel cquery --output=files //apps/macos:CalculatorMac`.

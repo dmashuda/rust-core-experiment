@@ -208,7 +208,10 @@ impl CalculatorUi {
                 self.is_error = false;
             }
             Action::Clear => {
+                // Reset the whole screen like a calculator's C key. History
+                // and `ans` are kept.
                 self.expression.clear();
+                self.display = "0".to_string();
                 self.is_error = false;
             }
             Action::Backspace => {
@@ -313,6 +316,21 @@ mod tests {
         assert_eq!(vm.expression, "");
         let vm = ui.press("backspace");
         assert_eq!(vm.expression, "", "backspace on empty is a no-op");
+    }
+
+    #[test]
+    fn clear_resets_the_display_after_a_result_or_error() {
+        let mut ui = CalculatorUi::new();
+        press_all(&mut ui, &["6", "*", "7", "evaluate"]);
+        let vm = ui.press("clear");
+        assert_eq!(vm.display, "0");
+        assert_eq!(vm.history.len(), 1, "history survives clear");
+
+        press_all(&mut ui, &["1", "/", "0", "evaluate"]);
+        let vm = ui.key_input("Escape").unwrap();
+        assert_eq!((vm.display.as_str(), vm.is_error, vm.expression.as_str()), ("0", false, ""));
+
+        assert_eq!(press_all(&mut ui, &["ans", "evaluate"]).display, "42", "ans survives clear");
     }
 
     #[test]

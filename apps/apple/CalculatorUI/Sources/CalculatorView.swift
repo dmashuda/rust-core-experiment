@@ -3,10 +3,14 @@ import SwiftUI
 
 /// Renders the Rust `ViewModel`; shared by the macOS and iOS apps.
 public struct CalculatorView: View {
-    @State private var model = CalculatorModel()
+    @State private var model: CalculatorModel
     @FocusState private var focused: Bool
 
-    public init() {}
+    /// `model` is injectable so tests can observe the state.
+    @MainActor
+    public init(model: CalculatorModel? = nil) {
+        _model = State(initialValue: model ?? CalculatorModel())
+    }
 
     public var body: some View {
         let vm = model.view
@@ -69,7 +73,11 @@ public struct CalculatorView: View {
             let key: String
             switch press.key {
             case .return: key = "Enter"
-            case .delete: key = "Backspace"
+            // The Mac "delete" key sends DEL (U+007F) and fn+delete sends
+            // NSDeleteFunctionKey (U+F728); neither matches SwiftUI's
+            // `.delete` (see KeyboardTests). Treat all of them as Backspace.
+            case .delete, .deleteForward, KeyEquivalent("\u{7f}"), KeyEquivalent("\u{f728}"):
+                key = "Backspace"
             case .escape: key = "Escape"
             default: key = press.characters
             }
