@@ -1,5 +1,6 @@
 load("@rules_apple//apple:macos.bzl", "macos_unit_test")
-load("@rules_cc//cc:defs.bzl", "cc_library")
+load("@rules_cc//cc:defs.bzl", "cc_import", "cc_library")
+load("@rules_kotlin//kotlin:android.bzl", "kt_android_library")
 load("@rules_kotlin//kotlin:jvm.bzl", "kt_jvm_library", "kt_jvm_test")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library")
 load("@rules_swift//swift:swift.bzl", "swift_interop_hint", "swift_library")
@@ -106,8 +107,9 @@ kt_jvm_library(
     deps = ["@maven//:net_java_dev_jna_jna"],
 )
 
-# The same crate as a host shared library, so the JVM test can load it with
-# JNA. (On Android, the NDK-built .so plays this role.)
+# The crate as a cdylib (lib<crate_name>.so/.dylib, no hash suffix). Built
+# for the host it backs the JVM test; built under android_binary's split
+# transition it becomes the Android libcalc_ffi.so.
 rust_shared_library(
     name = "calc_ffi_shared",
     srcs = ["src/lib.rs"],
@@ -131,4 +133,31 @@ kt_jvm_test(
         ":calc_ffi_kt",
         "@maven//:junit_junit",
     ],
+)
+
+# The same generated Kotlin, compiled for Android against JNA's AAR. (The
+# non-`android = true` template works on Android: it probes for
+# java.lang.ref.Cleaner at runtime and falls back to JNA's cleaner, so no
+# androidx dependency is needed.)
+kt_android_library(
+    name = "calc_ffi_android_kt",
+    srcs = [":calc_ffi_kotlin_gen"],
+    custom_package = "dev.mashuda.calc",
+    visibility = ["//visibility:public"],
+    deps = ["@maven_android//:net_java_dev_jna_jna"],
+)
+
+# The Rust code for Android: a real cdylib (libcalc_ffi.so, linked by rustc
+# with the NDK clang), imported as a prebuilt shared library so
+# android_binary copies it into lib/<abi>/ unchanged.
+#
+# Why not pass the rust_library's CcInfo like on Apple? rules_android only
+# links static deps it believes contain code, and it decides that from
+# LibraryToLink.objects. rules_rust provides the rlib as an opaque generated
+# archive with no objects listed, which rules_android classifies as an
+# "empty archive" and silently drops, leaving no Rust in the APK.
+cc_import(
+    name = "calc_ffi_android_native",
+    shared_library = ":calc_ffi_shared",
+    visibility = ["//visibility:public"],
 )

@@ -24,3 +24,17 @@ common --host_action_env=MACOSX_DEPLOYMENT_TARGET=14.0
 # iOS targets. rules_apple defaults to the simulator matching the host CPU.
 build:ios_sim --ios_multi_cpus=sim_arm64
 build:ios_device --ios_multi_cpus=arm64
+
+# Android: which ABIs android_binary builds native code (our Rust) for.
+# Must be repo-qualified (@@//...): rules_android's split transition turns the
+# label back into a string, and a bare //platforms:... then resolves inside
+# @rules_android ("no such package '@@rules_android+//platforms'").
+common --android_platforms=@@//platforms:arm64-v8a
+
+# rules_android builds its own Java tools from source and they use Java 17
+# features (Bazel's default -source is 11). Same flags as rules_android's
+# examples/basicapp/.bazelrc.
+common --java_language_version=17
+common --java_runtime_version=17
+common --tool_java_language_version=17
+common --tool_java_runtime_version=17

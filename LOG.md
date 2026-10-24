@@ -46,9 +46,15 @@ The ten things that mattered most:
 10. Pin `--macos_minimum_os` and `MACOSX_DEPLOYMENT_TARGET` in `.bazelrc` on
     day one: changing `--action_env` later invalidates the whole cache.
 
-Not done: running on an iOS simulator (no runtime installed), a signed
-device build (needs a provisioning profile), and the Android app (no
-SDK/NDK; see section 8 for the concrete plan).
+**Update: Android works too** (section 10). The APK runs on an API 37
+arm64 emulator with Rust evaluating every keypress. The Android-specific
+gotchas: rules_android silently drops rlibs, so ship a cdylib via
+`cc_import`. Name the ABI `platform()` exactly `arm64-v8a`.
+`--android_platforms` needs a repo-qualified `@@//` label. rules_android's
+tools need Java 17 flags.
+
+Not done: running on an iOS simulator (no runtime installed), and a signed
+iOS device build (needs a provisioning profile).
 
 ---
 
@@ -427,7 +433,7 @@ Findings:
   using a path from `env = {"CALC_FFI_LIB": "$(rootpath ...)"}`. The same hook
   is the cleanest fix for the Android `.so` naming problem below.
 
-## 8. Research: what Android will take (not built)
+## 8. Research: what Android will take (written before building; see section 10 for what was actually true)
 
 Pieces and versions (BCR, today):
 
@@ -448,7 +454,8 @@ android_binary(name = "calc_android", deps = [":app_lib"])        --android_plat
        └─ cc_library(deps = ["//bindings/uniffi:calc_ffi"])  ← rust_library via CcInfo, same as Apple
 ```
 
-Gotchas found in the sources, to verify when building:
+Gotchas found in the sources, to verify when building. Items 1 and 2 turned
+out wrong or unnecessary in practice; see section 10.
 
 1. **`android_binary` merges all native deps into one `.so`.** rules_android's
    `native_deps.bzl` links every `CcInfo` dependency into
@@ -482,3 +489,98 @@ A fresh `git clone` to a different path ran `bazel test //...` and
 `bazel build //...` successfully. Every action was a cache hit from the
 machine's shared Bazel cache. That also shows action keys do not depend on
 the checkout location: no absolute paths leak into actions.
+
+## 10. Milestone: Android app on the Rust core, running in the emulator
+
+Machine setup: Android Studio's SDK at `~/Library/Android/sdk`
+(platform `android-37.0`, build-tools 36.0.0, NDK 30.0.16248370, and an
+arm64 API 37 emulator image). `ANDROID_HOME` and `ANDROID_NDK_HOME` are
+exported in `~/.zshrc`; run `bazel shutdown` after changing them.
+
+```
+bazel build //apps/android:calc_android
+adb install -r bazel-bin/apps/android/calc_android.apk
+adb shell am start -n dev.mashuda.calc.app/.MainActivity
+```
+
+<img src="docs/android.png" width="280">
+
+Graph:
+
+```
+//bindings/uniffi:calc_ffi_shared (rust_shared_library → libcalc_ffi.so, built for arm64-v8a by the split transition)
+  └─ :calc_ffi_android_native (cc_import shared_library) ──┐
+//bindings/uniffi:calc_ffi_kotlin_gen (same calc_ffi.kt as the JVM test)
+  └─ :calc_ffi_android_kt (kt_android_library + @maven_android JNA AAR) ──┐
+//apps/android:app_lib (kt_android_library: MainActivity, plain Views)    │
+  └─ :calc_android (android_binary) ◄────────────────────────────────────┴─┘
+```
+
+APK contents: `lib/arm64-v8a/libcalc_ffi.so` (Rust; AArch64; `NEEDED` only
+libc/libm/libdl; 5.2 MB unstripped fastbuild), `lib/arm64-v8a/libjnidispatch.so`
+(JNA) and dex. Verified on the emulator through `adb` taps read back via
+`uiautomator dump`: `2 × (3 + 4) ^ 2` gives 98, `ans ÷ 7` gives 14, history
+renders, and `1 ÷ 0` shows Rust's "division by zero" message from
+`CalcException.Invalid`.
+
+Findings, in the order they bit:
+
+1. **`--android_platforms` must be repo-qualified.** With
+   `--android_platforms=//platforms:arm64-v8a`, analysis failed with
+   `no such package '@@rules_android+//platforms'`. rules_android's split
+   transition turns the label back into a string, and a bare `//` then
+   resolves inside rules_android. Use `@@//platforms:arm64-v8a`.
+2. **rules_android compiles its own Java tools and needs Java 17.** The
+   error was `pattern matching in instanceof is not supported in -source 11`.
+   Add `--java_language_version`, `--java_runtime_version`,
+   `--tool_java_language_version` and `--tool_java_runtime_version`, all
+   set to 17, matching rules_android's `examples/basicapp/.bazelrc`. The
+   first Android build took about 2.5 min, mostly building those tools.
+3. **rules_android silently drops Rust rlibs.** This is the big one. Passing
+   the `rust_library` (via `CcInfo`) to `android_binary` built a "successful"
+   APK with **no Rust code in it**. `native_deps.bzl::_contains_code_to_link`
+   only links static libraries whose `LibraryToLink.objects` are listed, or
+   whose archive is a *source* file. rules_rust provides the rlib as a
+   *generated* archive with no objects listed, so rules_android classifies it
+   as an "empty archive" and skips linking entirely. The Apple path is
+   unaffected because rules_apple links through `cc_common` normally.
+   **Fix:** build a real cdylib with `rust_shared_library` (rustc links it
+   with the NDK clang) and give it to `android_binary` via
+   `cc_import(shared_library = ...)`. Shared libraries are copied into the
+   APK unchanged under their own name, `libcalc_ffi.so`. That is exactly what
+   UniFFI's loader asks for, so the `libraryOverride` and `cdylib_name`
+   renaming predicted in section 8 is unnecessary. This is also how
+   cargo-ndk projects ship Rust.
+   *Check the APK contents* (`unzip -l`), because the build does not fail.
+4. **The ABI directory is the platform target's name.** With
+   `platform(name = "android_arm64")`, the `.so` landed in
+   `lib/android_arm64/`, which Android ignores. That would have been a
+   runtime `UnsatisfiedLinkError`. rules_android uses the platform name
+   verbatim, so name it `arm64-v8a` (the NDK example does this without
+   saying why).
+5. **No separate Kotlin variant needed.** Section 8 predicted otherwise.
+   The default (non-`android = true`) generated code probes for
+   `java.lang.ref.Cleaner` at runtime and falls back to JNA's cleaner, so the
+   same `calc_ffi.kt` serves the JVM test and the app. `android = true` would
+   only add an `androidx.annotation` dependency.
+6. **Two Maven repos.** `@maven` has JNA's desktop jar (JVM test) and
+   `@maven_android` has `jna:aar:5.17.0` (classes plus `libjnidispatch.so`
+   per ABI). The same classes on one classpath would collide at dexing.
+7. `android_sdk_repository` happily parsed the new-style `android-37.0`
+   platform directory, but its `api_level` override is an *int*, so `37`
+   would not match `"37.0"`. Leave it unset to auto-pick the highest level.
+   rules_android_ndk 0.1.5 worked with NDK r30 unchanged; it asks clang for
+   its resource dir instead of hardcoding versions.
+8. The NDK's prebuilt directory is still called `darwin-x86_64` on Apple
+   Silicon; the binaries are universal.
+9. **Plain Views, no resources.** The UI is built in Kotlin code with
+   `@android:style/Theme.Material.NoActionBar`, so there is no AppCompat,
+   no Compose compiler plugin and no `res/`. That kept the dependency
+   surface to JNA alone.
+10. **The allocator flag was not needed.** Because the cdylib is linked by
+    rustc itself, the allocator-shim flag from section 4 does not apply on
+    the Android path.
+
+Not done: R8/minification (needs JNA keep rules), x86_64 emulator ABI (add
+a `platform(name = "x86_64")` and the `x86_64-linux-android` triple), and
+release signing (Bazel signs with a debug key by default).

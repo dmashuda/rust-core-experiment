@@ -1,0 +1,15 @@
+# Android ABIs, selected with --android_platforms (see .bazelrc). rules_rust
+# picks the matching Rust target (aarch64-linux-android) from these
+# constraints, and rules_android_ndk the matching NDK clang.
+#
+# The target NAME is load-bearing: rules_android uses it verbatim as the APK's
+# lib/<name>/ directory, so it must be the Android ABI name ("arm64-v8a"),
+# or the device will not find the .so files.
+platform(
+    name = "arm64-v8a",
+    constraint_values = [
+        "@platforms//cpu:arm64",
+        "@platforms//os:android",
+    ],
+    visibility = ["//visibility:public"],
+)

@@ -1,0 +1,21 @@
+load("@rules_android//rules:rules.bzl", "android_binary")
+load("@rules_kotlin//kotlin:android.bzl", "kt_android_library")
+
+kt_android_library(
+    name = "app_lib",
+    srcs = glob(["src/**/*.kt"]),
+    custom_package = "dev.mashuda.calc.app",
+    manifest = "AndroidManifest.xml",
+    deps = ["//bindings/uniffi:calc_ffi_android_kt"],
+)
+
+# `adb install bazel-bin/apps/android/calc_android.apk`. The Rust code ships
+# as lib/arm64-v8a/libcalc_ffi.so, the name UniFFI's Kotlin loader expects.
+android_binary(
+    name = "calc_android",
+    manifest = "AndroidManifest.xml",
+    deps = [
+        ":app_lib",
+        "//bindings/uniffi:calc_ffi_android_native",
+    ],
+)

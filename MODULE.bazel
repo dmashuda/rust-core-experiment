@@ -24,6 +24,8 @@ rust.toolchain(
         "x86_64-apple-darwin",
         "aarch64-apple-ios",
         "aarch64-apple-ios-sim",
+        # Android (arm64-v8a: devices and the Apple Silicon emulator)
+        "aarch64-linux-android",
         # Web
         "wasm32-unknown-unknown",
     ],
@@ -141,3 +143,43 @@ maven.install(
     repositories = ["https://repo1.maven.org/maven2"],
 )
 use_repo(maven, "maven")
+
+###############################################################################
+# Android. Both repos read the *local* installs: rules_android uses
+# $ANDROID_HOME (picks the highest platforms/android-* level), and
+# rules_android_ndk uses $ANDROID_NDK_HOME (needs NDK r25b+).
+###############################################################################
+bazel_dep(name = "rules_android", version = "0.8.0")
+bazel_dep(name = "rules_android_ndk", version = "0.1.5")
+
+remote_android_extensions = use_extension(
+    "@rules_android//bzlmod_extensions:android_extensions.bzl",
+    "remote_android_tools_extensions",
+)
+use_repo(remote_android_extensions, "android_tools")
+
+android_sdk_repository_extension = use_extension(
+    "@rules_android//rules/android_sdk_repository:rule.bzl",
+    "android_sdk_repository_extension",
+)
+use_repo(android_sdk_repository_extension, "androidsdk")
+
+register_toolchains("@androidsdk//:sdk-toolchain", "@androidsdk//:all")
+
+android_ndk_repository_extension = use_extension(
+    "@rules_android_ndk//:extension.bzl",
+    "android_ndk_repository_extension",
+)
+use_repo(android_ndk_repository_extension, "androidndk")
+
+register_toolchains("@androidndk//:all")
+
+# A separate Maven repo for Android: JNA's AAR packaging carries the same
+# classes as the desktop jar in @maven, plus libjnidispatch.so per ABI.
+# Mixing both on one classpath would be a duplicate-class error at dexing.
+maven.install(
+    name = "maven_android",
+    artifacts = ["net.java.dev.jna:jna:aar:5.17.0"],
+    repositories = ["https://repo1.maven.org/maven2"],
+)
+use_repo(maven, "maven_android")
