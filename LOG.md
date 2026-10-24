@@ -767,3 +767,74 @@ Two portability bugs were found and fixed on the way:
 Gotcha: the stock `ubuntu:24.04` image cached on this Mac was **amd64**,
 so it would have run under emulation, and an arm64 bazelisk binary won't
 run in it. Pass `--platform linux/arm64` explicitly.
+
+## 14. Research: hermetic toolchains (and what was adopted)
+
+Goal: rely less on the host. Section 13 left these host dependencies:
+the C/C++ toolchain, Maven resolution, Xcode, and the Android SDK/NDK.
+
+### Candidates on BCR (checked 2026-10-24, all with commits this month)
+
+| Module | What it is | Verdict |
+| --- | --- | --- |
+| **`llvm`** 0.8.25 ([hermeticbuild/hermetic-llvm](https://github.com/hermeticbuild/hermetic-llvm), formerly `toolchains_llvm_bootstrapped`) | Prebuilt clang/lld. glibc (selectable version, default 2.28), musl, libc++, compiler-rt and libunwind are **built from source in Bazel**, so it is "zero-sysroot". Cross-compiles between Linux, macOS, Windows and wasm from any host, and downloads the macOS SDK from Apple's CDN itself. | **Adopted for Linux.** The only option that removes *all* host C dependencies, including libc headers. |
+| `toolchains_llvm` 1.12.0 (bazel-contrib) | Downloads LLVM release binaries. | Compiler only: still uses the host's headers and glibc unless you build and supply a sysroot archive yourself (rules_rust's `cross_compile_llvm` example does this, with LLVM 16). |
+| `hermetic_cc_toolchain` 4.3.0 (Uber) | `zig cc` (Zig 0.15.2; the README's "clang-17" is stale) bundling musl and glibc 2.17–2.38. | Mature, but needs `--sandbox_add_mount_pair` for Zig's cache in `$HOME`, which is a sandbox hole. rules_rust's Zig example is WORKSPACE-only, which Bazel 9 can't run. |
+| `gcc_toolchain`, `portable_cc_toolchain`, `toolchains_musl` | GCC-based / musl-only. | Not evaluated in depth; `llvm` covers more targets. |
+| **`hermetic_android_toolchains`** 0.5.0 ([keith](https://github.com/keith/hermetic_android_toolchains)) | Downloads the SDK (platforms 24–37.2, build-tools, platform-tools), the NDK (r25–r30) and optionally the emulator and system images, all sha256-pinned. Plugs into the same rules_android 0.8.0 and rules_android_ndk 0.1.5 we use, via `override_repo`. | **Recommended, not adopted.** It requires *you* to accept Google's SDK/NDK licenses (`--repo_env=ACCEPTED_ANDROID_SDK_LICENSE_VERSION=...`), which is your decision to make. NDK host archives are darwin/linux(x86_64)/windows only, so Android-on-arm64-Linux is still impossible. |
+| `rules_apple_linker` 0.8.0 | Swaps Apple's ld64 for lld. | A link-speed tool, not a hermeticity tool. Skip. |
+| Xcode | n/a | Cannot be downloaded hermetically (it needs an Apple account and license). The lever is **locking the Xcode version** with `--xcode_version_config` (rules_apple `doc/common_info.md`), so mismatched machines fail fast instead of producing different outputs and cache misses. |
+
+### Prototype → adoption: hermetic-llvm on Linux
+
+Tested in a stock `ubuntu:24.04` arm64 container with **no gcc, cc, clang,
+ld or python3** (only `ca-certificates curl git unzip zip` for bazelisk):
+
+- **Cold `bazel test //...` took 197 s**: 5 passed and 2 Apple tests
+  skipped, with no host compiler at all. About 3,200 actions, including
+  building the C runtimes from source. Cached reruns take about 11 s.
+- Registered with `llvm_toolchain.exec/target(os = "linux", ...)` only. On
+  macOS the Xcode toolchain from apple_support stays in charge: Mac test
+  actions were cache hits after the change, so their inputs were
+  untouched.
+
+Gotchas, each of which cost a cycle:
+
+1. **`undefined symbol: _Unwind_Resume` when the JVM loaded our Rust `.so`.**
+   hermetic-llvm resolves Rust's `-lgcc_s` to an *empty stub* and links
+   libunwind into **executables** only. Rust test binaries were fine, but a
+   cdylib loaded by a non-Rust process had all `_Unwind_*` symbols
+   undefined and no `NEEDED libgcc_s`. Fix:
+   `select({"@platforms//os:linux": [":libunwind_static"]})` on the
+   `rust_shared_library`, where `:libunwind_static` is a `cc_import`
+   wrapping `@llvm//runtimes/libunwind:libunwind.static`. A bare label
+   fails because rules_rust accepts only `cc_library`-like deps.
+   *Only the JNA test caught this*, which is a good argument for testing
+   shared libraries from their real host language.
+2. **Diamond dependency broke Android on the Mac.** `llvm` requires
+   `rules_go` 0.62, which lifted `gazelle` 0.47 → 0.51.3, whose Go tools need
+   Go ≥ 1.24.12. But rules_android pins `go_sdk.download(version = "1.22.4")`.
+   Error: `go.work requires go >= 1.24.12 (running go 1.22.4)`. Fix: the
+   root module declares `bazel_dep(rules_go 0.62.0)` and
+   `go_sdk.download(version = "1.25.0")`; the root's SDK wins. Lesson:
+   adding a module can change versions of unrelated modules through
+   minimal version selection; `bazel mod graph` before and after shows it.
+3. The README recommends `rules_rs` (same org) over rules_rust and lists
+   rules_rust gotchas. Only the libgcc_s one bit us; the cc-rs/libtool one
+   only applies on macOS, where we don't use this toolchain.
+
+### Also adopted: Maven lockfiles
+
+`maven_install.json` and `maven_android_install.json`, created with
+`bazel run @maven//:pin` and `@maven_android//:pin`, with versions and
+sha256s for every artifact, including ones other modules add to the shared
+`@maven` repo (Guava, Gson...). The pin step writes files with canonical
+names (`rules_jvm_external++maven+maven_install.json`); rename them and
+point `lock_file` at them.
+
+### Host dependencies, after this
+
+| Host | Still needs |
+| --- | --- |
+| Linux | bazelisk (plus curl, git, unzip and zip in the container, not proven minimal). No compiler, linker, libc headers, Python or JDK. Android additionally needs a local SDK/NDK until `hermetic_android_toolchains` is adopted, and an x86_64 host. |
+| macOS | Xcode (unavoidable for Apple targets; lock its version), plus the Android SDK/NDK for Android builds. |

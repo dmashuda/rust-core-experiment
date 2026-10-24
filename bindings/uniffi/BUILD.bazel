@@ -123,7 +123,21 @@ rust_shared_library(
     deps = [
         "//core/calc_ui",
         "@crates//:uniffi",
-    ],
+    ] + select({
+        # hermetic-llvm replaces libgcc_s with an empty stub and links
+        # libunwind into *executables* only. A .so loaded by a non-Rust
+        # process (the JVM) must carry its own unwinder, or loading fails
+        # with "undefined symbol: _Unwind_Resume".
+        "@platforms//os:linux": [":libunwind_static"],
+        "//conditions:default": [],
+    }),
+)
+
+# LLVM's libunwind archive (built from source by hermetic-llvm), wrapped so
+# rules_rust accepts it as a C dependency.
+cc_import(
+    name = "libunwind_static",
+    static_library = "@llvm//runtimes/libunwind:libunwind.static",
 )
 
 # Kotlin -> JNA -> Rust on the host JVM: proves the Android binding path

@@ -27,9 +27,12 @@ apps/android            renderer: Kotlin (plain Views) + android_binary; Rust sh
 | `bazel build //apps/android:calc_android` | Android APK (arm64-v8a); `adb install -r bazel-bin/apps/android/calc_android.apk` |
 | `bazel build --config=release //apps/web:site` | Optimized web bundle (~105 KB wasm) |
 
-Requirements: macOS with Xcode (for the Apple targets) and bazelisk. Bazel
-downloads Rust, Node and the JDK itself. For Android, install the SDK and
-NDK (r25b+) and export `ANDROID_HOME` and `ANDROID_NDK_HOME`.
+Requirements: bazelisk. Bazel downloads Rust, Node, the JDK and (on Linux)
+a hermetic LLVM C/C++ toolchain, so a Linux box needs no compiler at all.
+Apple targets need macOS with Xcode; they are skipped elsewhere. Android
+targets need a local SDK and NDK (r25b+) via `ANDROID_HOME` and
+`ANDROID_NDK_HOME`; they are skipped when those are unset. See LOG.md
+sections 13–14.
 
 | Web | macOS (offscreen snapshot test) | Android (emulator) |
 | --- | --- | --- |
