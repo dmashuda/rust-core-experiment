@@ -3,31 +3,32 @@ import XCTest
 
 /// Exercises the generated Swift bindings against the real Rust library.
 final class CalcFFITests: XCTestCase {
-    func testFreeFunction() throws {
-        XCTAssertEqual(try evaluate(expression: "1 + 2 * 3"), "7")
-        XCTAssertEqual(try evaluate(expression: "0.1 + 0.2"), "0.3")
+    func testPressingKeysEvaluates() {
+        let ui = CalculatorUi()
+        var vm = ui.view()
+        XCTAssertEqual(vm.display, "0")
+        for id in ["6", "*", "7"] { vm = ui.press(id: id) }
+        XCTAssertEqual(vm.expression, "6*7")
+        vm = ui.press(id: "evaluate")
+        XCTAssertEqual(vm.display, "42")
+        XCTAssertEqual(vm.history, [HistoryLine(expression: "6*7", result: "42")])
     }
 
-    func testErrorsBecomeSwiftErrors() {
-        XCTAssertThrowsError(try evaluate(expression: "1 / 0")) { error in
-            guard case CalcError.Invalid(let reason) = error else {
-                return XCTFail("unexpected error \(error)")
-            }
-            XCTAssertEqual(reason, "division by zero")
-        }
+    func testErrorsAreViewState() {
+        let ui = CalculatorUi()
+        for id in ["1", "/", "0"] { _ = ui.press(id: id) }
+        let vm = ui.press(id: "evaluate")
+        XCTAssertTrue(vm.isError)
+        XCTAssertEqual(vm.display, "division by zero")
     }
 
-    func testCalculatorObject() throws {
-        let calc = Calculator()
-        XCTAssertEqual(try calc.evaluate(expression: "6 * 7"), "42")
-        XCTAssertEqual(try calc.evaluate(expression: "ans / 2"), "21")
-        XCTAssertEqual(
-            calc.history(),
-            [
-                HistoryEntry(expression: "6 * 7", result: "42"),
-                HistoryEntry(expression: "ans / 2", result: "21"),
-            ])
-        calc.clear()
-        XCTAssertTrue(calc.history().isEmpty)
+    func testKeypadAndKeyboard() {
+        let ui = CalculatorUi()
+        let keypad = ui.view().keypad
+        XCTAssertEqual(keypad.first?.keys.first?.label, "C")
+        XCTAssertEqual(keypad.last?.keys.last?.style, .operator)
+        XCTAssertNotNil(ui.keyInput(key: "9"))
+        XCTAssertNil(ui.keyInput(key: "Tab"))
+        XCTAssertEqual(ui.keyInput(key: "Enter")?.display, "9")
     }
 }

@@ -1,0 +1,16 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+# Platform-independent UI state machine: keypad layout, input handling,
+# display/error state and history formatting. Front ends only render the
+# ViewModel and feed key presses back in.
+rust_library(
+    name = "calc_ui",
+    srcs = glob(["src/**/*.rs"]),
+    visibility = ["//visibility:public"],
+    deps = ["//core/calc_core"],
+)
+
+rust_test(
+    name = "calc_ui_test",
+    crate = ":calc_ui",
+)

@@ -1,56 +1,121 @@
-//! wasm-bindgen surface over `calc_core` for the web front end.
+//! wasm-bindgen surface over `calc_ui` for the web front end.
+//!
+//! Structs are exported as JS classes with getters (`getter_with_clone`).
+//! wasm-bindgen frees them through a FinalizationRegistry once JS drops
+//! them, so the renderer never has to call `.free()`.
 
 use wasm_bindgen::prelude::*;
 
-/// Evaluates an expression, returning the formatted result or throwing a JS
-/// `Error` with a readable message.
 #[wasm_bindgen]
-pub fn evaluate(expression: &str) -> Result<String, JsError> {
-    calc_core::evaluate(expression)
-        .map(calc_core::format_number)
-        .map_err(|e| JsError::new(&e.to_string()))
+#[derive(Clone, Copy)]
+pub enum KeyStyle {
+    Input,
+    Function,
+    Operator,
+}
+
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone)]
+pub struct KeySpec {
+    pub id: String,
+    pub label: String,
+    pub style: KeyStyle,
+    pub span: u32,
+}
+
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone)]
+pub struct KeyRow {
+    pub keys: Vec<KeySpec>,
+}
+
+#[wasm_bindgen(getter_with_clone)]
+#[derive(Clone)]
+pub struct HistoryLine {
+    pub expression: String,
+    pub result: String,
+}
+
+#[wasm_bindgen(getter_with_clone)]
+pub struct ViewModel {
+    pub expression: String,
+    pub display: String,
+    #[wasm_bindgen(js_name = isError)]
+    pub is_error: bool,
+    pub history: Vec<HistoryLine>,
+    pub keypad: Vec<KeyRow>,
+    pub caption: String,
+}
+
+impl From<calc_ui::ViewModel> for ViewModel {
+    fn from(vm: calc_ui::ViewModel) -> Self {
+        ViewModel {
+            expression: vm.expression,
+            display: vm.display,
+            is_error: vm.is_error,
+            history: vm
+                .history
+                .into_iter()
+                .map(|h| HistoryLine { expression: h.expression, result: h.result })
+                .collect(),
+            keypad: vm
+                .keypad
+                .into_iter()
+                .map(|row| KeyRow {
+                    keys: row
+                        .keys
+                        .into_iter()
+                        .map(|k| KeySpec {
+                            id: k.id,
+                            label: k.label,
+                            style: match k.style {
+                                calc_ui::KeyStyle::Input => KeyStyle::Input,
+                                calc_ui::KeyStyle::Function => KeyStyle::Function,
+                                calc_ui::KeyStyle::Operator => KeyStyle::Operator,
+                            },
+                            span: k.span,
+                        })
+                        .collect(),
+                })
+                .collect(),
+            caption: vm.caption,
+        }
+    }
+}
+
+/// The calculator screen.
+#[wasm_bindgen]
+pub struct CalculatorUi {
+    inner: calc_ui::CalculatorUi,
 }
 
 #[wasm_bindgen]
-pub struct Calculator {
-    inner: calc_core::Calculator,
-}
-
-#[wasm_bindgen]
-impl Calculator {
+impl CalculatorUi {
     #[wasm_bindgen(constructor)]
-    pub fn new() -> Calculator {
-        Calculator { inner: calc_core::Calculator::new() }
+    pub fn new() -> CalculatorUi {
+        CalculatorUi { inner: calc_ui::CalculatorUi::new() }
     }
 
-    pub fn evaluate(&mut self, expression: &str) -> Result<String, JsError> {
-        self.inner.evaluate(expression).map_err(|e| JsError::new(&e.to_string()))
+    /// The current state, for the initial render.
+    pub fn view(&self) -> ViewModel {
+        self.inner.view().into()
     }
 
-    /// History, oldest first.
-    pub fn history(&self) -> Vec<HistoryEntry> {
-        self.inner
-            .history()
-            .iter()
-            .map(|e| HistoryEntry { expression: e.expression.clone(), result: e.result.clone() })
-            .collect()
+    /// An on-screen key was tapped.
+    pub fn press(&mut self, id: &str) -> ViewModel {
+        self.inner.press(id).into()
     }
 
-    pub fn clear(&mut self) {
-        self.inner.clear();
+    /// A `KeyboardEvent.key`: "Enter", "Backspace", "Escape" or one
+    /// character. `undefined` means the calculator ignores it.
+    #[wasm_bindgen(js_name = keyInput)]
+    pub fn key_input(&mut self, key: &str) -> Option<ViewModel> {
+        self.inner.key_input(key).map(Into::into)
     }
 }
 
-impl Default for Calculator {
+impl Default for CalculatorUi {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// One history row. Exported as a JS class with getters, which avoids pulling
-/// in js-sys/serde just to return structured data.
-#[wasm_bindgen(getter_with_clone)]
-pub struct HistoryEntry {
-    pub expression: String,
-    pub result: String,
 }

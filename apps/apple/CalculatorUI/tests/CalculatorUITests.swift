@@ -5,22 +5,15 @@ import XCTest
 
 @MainActor
 final class CalculatorUITests: XCTestCase {
-    func testModelDrivesRustCore() {
+    /// The Swift side only forwards input; this checks the wiring, not the
+    /// calculator logic (that is tested once, in Rust: //core/calc_ui).
+    func testModelForwardsToRust() {
         let model = CalculatorModel()
-        "2*(3+4)^2".forEach { model.append(String($0)) }
-        model.evaluate()
-        XCTAssertEqual(model.display, "98")
-        XCTAssertFalse(model.isError)
-
-        model.append("ans/7")
-        model.evaluate()
-        XCTAssertEqual(model.display, "14")
-        XCTAssertEqual(model.history.map(\.result), ["14", "98"])
-
-        model.append("1/0")
-        model.evaluate()
-        XCTAssertTrue(model.isError)
-        XCTAssertEqual(model.display, "division by zero")
+        for id in ["2", "*", "(", "3", "+", "4", ")", "^", "2", "evaluate"] { model.press(id) }
+        XCTAssertEqual(model.view.display, "98")
+        XCTAssertTrue(model.keyInput("1"))
+        XCTAssertFalse(model.keyInput("Tab"))
+        XCTAssertEqual(model.view.expression, "1")
     }
 
     /// Renders the real view offscreen and saves a PNG into Bazel's undeclared

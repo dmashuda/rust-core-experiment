@@ -9,7 +9,7 @@ rust_shared_library(
     srcs = ["src/lib.rs"],
     target_compatible_with = ["@platforms//cpu:wasm32"],
     deps = [
-        "//core/calc_core",
+        "//core/calc_ui",
         "@rules_rust_wasm_bindgen//3rdparty:wasm_bindgen",
     ],
 )

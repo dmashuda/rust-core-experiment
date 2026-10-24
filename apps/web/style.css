@@ -4,6 +4,7 @@
   --text: #18181b;
   --muted: #71717a;
   --key: #e4e4e7;
+  --key-fn: #d4d4d8;
   --op: #fb923c;
   --op-text: #ffffff;
   --error: #dc2626;
@@ -15,6 +16,7 @@
     --text: #fafafa;
     --muted: #a1a1aa;
     --key: #27272a;
+    --key-fn: #3f3f46;
     --error: #f87171;
   }
 }
@@ -51,8 +53,8 @@ body {
   cursor: pointer;
 }
 .keys button:active { filter: brightness(0.9); }
+.keys button.function { background: var(--key-fn); }
 .keys button.op { background: var(--op); color: var(--op-text); }
-.keys button.wide { grid-column: span 2; }
 .history { list-style: none; padding: 0; margin: 16px 0 0; max-height: 160px; overflow: auto; color: var(--muted); font-size: 0.9rem; }
 .history li { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
 .history li span:last-child { color: var(--text); }

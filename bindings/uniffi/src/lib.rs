@@ -1,80 +1,114 @@
-//! UniFFI surface over `calc_core` for Swift (Apple) and Kotlin (Android).
+//! UniFFI surface over `calc_ui` for Swift (Apple) and Kotlin (Android).
 //!
 //! Proc-macro mode: no .udl file and no build.rs. Bindings are generated
 //! from the compiled library's embedded metadata (see //bindings/uniffi:BUILD).
+//!
+//! The records below mirror `calc_ui`'s types: UniFFI derives have to live in
+//! the crate that defines the type, and the core crates stay FFI-free.
 
 use std::sync::Mutex;
 
 uniffi::setup_scaffolding!();
 
-/// Surfaces as a Swift `Error` / Kotlin exception.
-///
-/// The field is deliberately not called `message`: in Kotlin every error
-/// variant becomes an exception subclass, and a `message` field collides with
-/// `Throwable.message` ("overload resolution ambiguity").
-#[derive(Debug, uniffi::Error)]
-pub enum CalcError {
-    Invalid { reason: String },
-}
-
-impl std::error::Error for CalcError {}
-
-impl std::fmt::Display for CalcError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CalcError::Invalid { reason } => f.write_str(reason),
-        }
-    }
-}
-
-impl From<calc_core::CalcError> for CalcError {
-    fn from(e: calc_core::CalcError) -> Self {
-        CalcError::Invalid { reason: e.to_string() }
-    }
+#[derive(uniffi::Enum)]
+pub enum KeyStyle {
+    Input,
+    Function,
+    Operator,
 }
 
 #[derive(uniffi::Record)]
-pub struct HistoryEntry {
+pub struct KeySpec {
+    pub id: String,
+    pub label: String,
+    pub style: KeyStyle,
+    pub span: u32,
+}
+
+#[derive(uniffi::Record)]
+pub struct KeyRow {
+    pub keys: Vec<KeySpec>,
+}
+
+#[derive(uniffi::Record)]
+pub struct HistoryLine {
     pub expression: String,
     pub result: String,
 }
 
-/// Evaluates an expression and returns the formatted result.
-#[uniffi::export]
-pub fn evaluate(expression: String) -> Result<String, CalcError> {
-    Ok(calc_core::format_number(calc_core::evaluate(&expression)?))
+#[derive(uniffi::Record)]
+pub struct ViewModel {
+    pub expression: String,
+    pub display: String,
+    pub is_error: bool,
+    pub history: Vec<HistoryLine>,
+    pub keypad: Vec<KeyRow>,
+    pub caption: String,
 }
 
-/// Stateful calculator. UniFFI objects are shared (`Arc`) across the FFI
+impl From<calc_ui::ViewModel> for ViewModel {
+    fn from(vm: calc_ui::ViewModel) -> Self {
+        ViewModel {
+            expression: vm.expression,
+            display: vm.display,
+            is_error: vm.is_error,
+            history: vm
+                .history
+                .into_iter()
+                .map(|h| HistoryLine { expression: h.expression, result: h.result })
+                .collect(),
+            keypad: vm
+                .keypad
+                .into_iter()
+                .map(|row| KeyRow {
+                    keys: row
+                        .keys
+                        .into_iter()
+                        .map(|k| KeySpec {
+                            id: k.id,
+                            label: k.label,
+                            style: match k.style {
+                                calc_ui::KeyStyle::Input => KeyStyle::Input,
+                                calc_ui::KeyStyle::Function => KeyStyle::Function,
+                                calc_ui::KeyStyle::Operator => KeyStyle::Operator,
+                            },
+                            span: k.span,
+                        })
+                        .collect(),
+                })
+                .collect(),
+            caption: vm.caption,
+        }
+    }
+}
+
+/// The calculator screen. UniFFI objects are shared (`Arc`) across the FFI
 /// boundary and may be called from any thread, hence the `Mutex`.
 #[derive(uniffi::Object)]
-pub struct Calculator {
-    inner: Mutex<calc_core::Calculator>,
+pub struct CalculatorUi {
+    inner: Mutex<calc_ui::CalculatorUi>,
 }
 
 #[uniffi::export]
-impl Calculator {
+impl CalculatorUi {
     #[uniffi::constructor]
     pub fn new() -> Self {
-        Calculator { inner: Mutex::new(calc_core::Calculator::new()) }
+        CalculatorUi { inner: Mutex::new(calc_ui::CalculatorUi::new()) }
     }
 
-    pub fn evaluate(&self, expression: String) -> Result<String, CalcError> {
-        Ok(self.inner.lock().unwrap().evaluate(&expression)?)
+    /// The current state, for the initial render.
+    pub fn view(&self) -> ViewModel {
+        self.inner.lock().unwrap().view().into()
     }
 
-    /// History, oldest first.
-    pub fn history(&self) -> Vec<HistoryEntry> {
-        self.inner
-            .lock()
-            .unwrap()
-            .history()
-            .iter()
-            .map(|e| HistoryEntry { expression: e.expression.clone(), result: e.result.clone() })
-            .collect()
+    /// An on-screen key was tapped.
+    pub fn press(&self, id: String) -> ViewModel {
+        self.inner.lock().unwrap().press(&id).into()
     }
 
-    pub fn clear(&self) {
-        self.inner.lock().unwrap().clear();
+    /// A hardware key: "Enter", "Backspace", "Escape" or one character.
+    /// `None` means the calculator ignores it.
+    pub fn key_input(&self, key: String) -> Option<ViewModel> {
+        self.inner.lock().unwrap().key_input(&key).map(Into::into)
     }
 }

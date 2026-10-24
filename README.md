@@ -2,18 +2,20 @@
 
 A Bazel 9 monorepo where one Rust core powers a web app, a macOS app, an iOS
 app and an Android app. Everything is built and tested
-by Bazel. The calculator is just the vehicle. **See [LOG.md](LOG.md) for the
+by Bazel. All behaviour, including UI state, lives in Rust; each app only
+draws the Rust view model. The calculator is just the vehicle. **See [LOG.md](LOG.md) for the
 research log and every gotcha hit along the way.**
 
 ```
 core/calc_core          Rust: expression evaluator + stateful Calculator (pure, no FFI)
-bindings/wasm           wasm-bindgen wrapper   → JS/TS (web)
-bindings/uniffi         UniFFI wrapper         → Swift (Apple) + Kotlin (Android/JVM)
+core/calc_ui            Rust: UI view model (keypad, input, keyboard, errors, history)
+bindings/wasm           wasm-bindgen wrapper of calc_ui → JS/TS (web)
+bindings/uniffi         UniFFI wrapper of calc_ui      → Swift (Apple) + Kotlin (Android/JVM)
 tools/uniffi            uniffi-bindgen(-swift) built from source as rust_binary
-apps/web                TypeScript + esbuild, served by a tiny Node server
-apps/apple/CalculatorUI SwiftUI view + model shared by macOS and iOS
+apps/web                renderer: TypeScript + esbuild, served by a tiny Node server
+apps/apple/CalculatorUI renderer: SwiftUI, shared by macOS and iOS
 apps/macos, apps/ios    macos_application / ios_application
-apps/android            Kotlin (plain Views) + android_binary; Rust ships as libcalc_ffi.so
+apps/android            renderer: Kotlin (plain Views) + android_binary; Rust ships as libcalc_ffi.so
 ```
 
 | Command | What it does |

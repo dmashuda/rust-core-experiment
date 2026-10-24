@@ -1,46 +1,27 @@
 import CalcFFI
 import Observation
 
-/// View model over the Rust `Calculator` (exposed through UniFFI).
+/// Holds the Rust `CalculatorUi` and its latest `ViewModel` for SwiftUI.
+/// No calculator logic here: input goes to Rust, the returned state is drawn.
 @MainActor
 @Observable
 public final class CalculatorModel {
-    public private(set) var expression = ""
-    public private(set) var display = "0"
-    public private(set) var isError = false
-    public private(set) var history: [HistoryEntry] = []
+    public private(set) var view: ViewModel
 
-    private let calculator = Calculator()
+    private let ui = CalculatorUi()
 
-    public init() {}
-
-    public func append(_ token: String) {
-        expression += token
-        isError = false
+    public init() {
+        view = ui.view()
     }
 
-    public func backspace() {
-        if !expression.isEmpty { expression.removeLast() }
-        isError = false
+    public func press(_ id: String) {
+        view = ui.press(id: id)
     }
 
-    public func clear() {
-        expression = ""
-        isError = false
-    }
-
-    public func evaluate() {
-        do {
-            display = try calculator.evaluate(expression: expression)
-            history = calculator.history().reversed()
-            expression = ""
-            isError = false
-        } catch CalcError.Invalid(let reason) {
-            display = reason
-            isError = true
-        } catch {
-            display = "\(error)"
-            isError = true
-        }
+    /// Returns false if Rust ignored the key, so it can propagate.
+    public func keyInput(_ key: String) -> Bool {
+        guard let next = ui.keyInput(key: key) else { return false }
+        view = next
+        return true
     }
 }

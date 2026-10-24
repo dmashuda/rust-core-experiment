@@ -46,6 +46,10 @@ The ten things that mattered most:
 10. Pin `--macos_minimum_os` and `MACOSX_DEPLOYMENT_TARGET` in `.bazelrc` on
     day one: changing `--action_env` later invalidates the whole cache.
 
+**Update: UI logic moved into Rust** (section 11). A `calc_ui` view model
+owns the keypad layout, input editing, keyboard handling, errors and
+history. The four front ends are now pure renderers.
+
 **Update: Android works too** (section 10). The APK runs on an API 37
 arm64 emulator with Rust evaluating every keypress. The Android-specific
 gotchas: rules_android silently drops rlibs, so ship a cdylib via
@@ -584,3 +588,71 @@ Findings, in the order they bit:
 Not done: R8/minification (needs JNA keep rules), x86_64 emulator ABI (add
 a `platform(name = "x86_64")` and the `x86_64-linux-android` triple), and
 release signing (Bazel signs with a debug key by default).
+
+## 11. Refactor: UI logic in Rust, platforms as thin renderers
+
+Problem: every front end (TypeScript, SwiftUI, Android) reimplemented the
+same keypad table, input editing (append, backspace, clear, evaluate),
+keyboard mapping, error state and history ordering.
+
+Design (the "headless core + native shells" pattern; compare
+[Crux](https://github.com/redbadger/crux), hand-rolled here):
+
+```
+core/calc_core   evaluator (unchanged)
+core/calc_ui     CalculatorUi state machine → ViewModel   (pure Rust, 8 unit tests)
+                   view()                → ViewModel
+                   press(key_id)         → ViewModel      on-screen keys
+                   key_input("Enter"|"Backspace"|"Escape"|char) → Option<ViewModel>
+                                                          hardware keyboard; None = not handled
+bindings/uniffi  mirror records + CalculatorUi object     (Swift, Kotlin)
+bindings/wasm    mirror classes + CalculatorUi            (JS/TS)
+apps/*           render(ViewModel), forward taps/keys
+```
+
+`ViewModel` = `expression`, `display`, `is_error`, `history` (newest
+first), `keypad` (rows of `KeySpec { id, label, style: Input|Function|Operator, span }`)
+and `caption`. The keypad is *data*: adding a key is a Rust-only change that
+every app picks up.
+
+Results:
+
+- **No calculator logic remains in any renderer.** No key tables, no string
+  editing. Renderers went from 431 to 337 lines (web 91→62, Swift
+  177→121, Android 163→154). The line savings are modest because drawing
+  dominates. The win is that behaviour lives in one place, tested once with
+  `rust_test` instead of through XCTest, Chrome and adb. Android also
+  gained hardware-keyboard support for free.
+- Verified on all targets: `bazel test //...` (7 targets), headless Chrome
+  (keyboard path), the Android emulator (tap path *and* `adb shell input`
+  keyboard path), and the macOS offscreen snapshot.
+- The old `Calculator`/`evaluate` FFI exports were removed, so each binding
+  now exposes one API (`CalculatorUi`). The binding tests were rewritten
+  against it.
+- **No Bazel changes were needed** beyond a new `rust_library` and two
+  `deps` edits. Once the binding plumbing exists, moving logic into Rust is
+  purely a code change.
+
+Findings:
+
+1. **UniFFI derives must live in the defining crate**, so each binding
+   crate carries mirror types and a `From<calc_ui::ViewModel>` conversion
+   (about 40 lines each). That is the price of keeping `core/` FFI-free.
+   UniFFI's `remote` types are the alternative if the duplication grows.
+2. **Nested structs through wasm-bindgen work.** `Vec<KeyRow>` holding
+   `Vec<KeySpec>` works with `#[wasm_bindgen(getter_with_clone)]`, and
+   C-style enums arrive as TS enums. wasm-bindgen 0.2.121 emits a
+   `FinalizationRegistry` by default, so returned view models are
+   garbage-collected and the renderer never calls `.free()`.
+3. **Keyboard handling moved into Rust behind a tiny string protocol.** Each
+   platform translates its native key event to `"Enter"`, `"Backspace"`,
+   `"Escape"` or one character. Rust's `Option` return tells the platform
+   whether to consume the event (`preventDefault` on the web, `.handled`
+   in SwiftUI, `true` from `onKeyDown` on Android).
+4. **Gotcha when verifying:** `bazel run //apps/web:serve` repointed the
+   `bazel-bin`/`bazel-testlogs` convenience symlinks, so
+   `adb install bazel-bin/.../calc_android.apk` failed, and my tap script
+   silently drove the *previously installed* old APK. I caught it because
+   the caption text had changed. Lessons: re-run `bazel build` right before
+   `adb install`, check the install result, and assert on something that
+   proves which build is running.

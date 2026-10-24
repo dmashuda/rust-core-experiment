@@ -2,7 +2,8 @@ package dev.mashuda.calc
 
 import java.io.File
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertThrows
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.BeforeClass
 import org.junit.Test
 
@@ -18,26 +19,34 @@ class CalcFfiKotlinTest {
     }
 
     @Test
-    fun freeFunction() {
-        assertEquals("7", evaluate("1 + 2 * 3"))
-        assertEquals("0.3", evaluate("0.1 + 0.2"))
+    fun pressingKeysEvaluates() {
+        CalculatorUi().use { ui ->
+            listOf("6", "*", "7").forEach { ui.press(it) }
+            val vm = ui.press("evaluate")
+            assertEquals("42", vm.display)
+            assertEquals(listOf(HistoryLine("6*7", "42")), vm.history)
+        }
     }
 
     @Test
-    fun errorsBecomeExceptions() {
-        val e = assertThrows(CalcException.Invalid::class.java) { evaluate("1 / 0") }
-        assertEquals("division by zero", e.reason)
+    fun errorsAreViewState() {
+        CalculatorUi().use { ui ->
+            listOf("1", "/", "0").forEach { ui.press(it) }
+            val vm = ui.press("evaluate")
+            assertTrue(vm.isError)
+            assertEquals("division by zero", vm.display)
+        }
     }
 
     @Test
-    fun calculatorObject() {
-        Calculator().use { calc ->
-            assertEquals("42", calc.evaluate("6 * 7"))
-            assertEquals("21", calc.evaluate("ans / 2"))
-            assertEquals(
-                listOf(HistoryEntry("6 * 7", "42"), HistoryEntry("ans / 2", "21")),
-                calc.history(),
-            )
+    fun keypadAndKeyboard() {
+        CalculatorUi().use { ui ->
+            val keypad = ui.view().keypad
+            assertEquals("C", keypad.first().keys.first().label)
+            assertEquals(KeyStyle.OPERATOR, keypad.last().keys.last().style)
+            assertNull(ui.keyInput("Tab"))
+            ui.keyInput("9")
+            assertEquals("9", ui.keyInput("Enter")?.display)
         }
     }
 }

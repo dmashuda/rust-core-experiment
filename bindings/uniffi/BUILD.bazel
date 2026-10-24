@@ -11,7 +11,7 @@ rust_library(
     # Stub manifest read by UniFFI's proc-macros; see the comment inside it.
     compile_data = ["Cargo.toml"],
     deps = [
-        "//core/calc_core",
+        "//core/calc_ui",
         "@crates//:uniffi",
     ],
 )
@@ -116,7 +116,7 @@ rust_shared_library(
     compile_data = ["Cargo.toml"],
     crate_name = "calc_ffi",
     deps = [
-        "//core/calc_core",
+        "//core/calc_ui",
         "@crates//:uniffi",
     ],
 )

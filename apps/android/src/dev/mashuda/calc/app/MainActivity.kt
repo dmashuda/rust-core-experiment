@@ -8,6 +8,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowInsetsController
@@ -15,57 +16,64 @@ import android.widget.Button
 import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import dev.mashuda.calc.CalcException
-import dev.mashuda.calc.Calculator
+import dev.mashuda.calc.CalculatorUi
+import dev.mashuda.calc.KeyStyle
+import dev.mashuda.calc.ViewModel
 
-/** Calculator UI in plain Android Views; every evaluation runs in Rust. */
+/**
+ * Renderer only: draws the Rust ViewModel with plain Android Views and
+ * forwards input. Keypad layout, editing, evaluation and history all live in
+ * //core/calc_ui.
+ */
 class MainActivity : Activity() {
-    private lateinit var calculator: Calculator
+    private lateinit var ui: CalculatorUi
     private lateinit var exprView: TextView
     private lateinit var resultView: TextView
+    private lateinit var keypad: GridLayout
     private lateinit var historyView: TextView
-    private var expression = ""
+    private lateinit var captionView: TextView
 
-    private data class Key(val label: String, val insert: String? = null, val op: Boolean = false, val span: Int = 1)
-
-    private val keys = listOf(
-        Key("C"), Key("(", "("), Key(")", ")"), Key("÷", "/", op = true),
-        Key("7", "7"), Key("8", "8"), Key("9", "9"), Key("×", "*", op = true),
-        Key("4", "4"), Key("5", "5"), Key("6", "6"), Key("−", "-", op = true),
-        Key("1", "1"), Key("2", "2"), Key("3", "3"), Key("+", "+", op = true),
-        Key("0", "0"), Key(".", "."), Key("^", "^"), Key("⌫"),
-        Key("ans", "ans"), Key("%", "%"), Key("=", op = true, span = 2),
-    )
+    private val dark get() =
+        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    private val fg get() = if (dark) Color.rgb(250, 250, 250) else Color.rgb(24, 24, 27)
+    private val muted get() = if (dark) Color.rgb(161, 161, 170) else Color.rgb(113, 113, 122)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        calculator = Calculator()
-        setContentView(buildUi())
+        ui = CalculatorUi()
+        setContentView(buildLayout())
         // Dark status-bar icons on the light background (light mode only).
-        if (!isDarkMode()) {
+        if (!dark) {
             window.insetsController?.setSystemBarsAppearance(
                 WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
                 WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
             )
         }
+        render(ui.view())
     }
 
     override fun onDestroy() {
-        calculator.close()
+        ui.close()
         super.onDestroy()
     }
 
-    private fun buildUi(): LinearLayout {
-        val dark = isDarkMode()
-        val bg = if (dark) Color.rgb(9, 9, 11) else Color.rgb(244, 244, 245)
-        val fg = if (dark) Color.rgb(250, 250, 250) else Color.rgb(24, 24, 27)
-        val muted = if (dark) Color.rgb(161, 161, 170) else Color.rgb(113, 113, 122)
-        val keyBg = if (dark) Color.rgb(39, 39, 42) else Color.rgb(228, 228, 231)
-        val opBg = Color.rgb(251, 146, 60)
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val key = when (keyCode) {
+            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> "Enter"
+            KeyEvent.KEYCODE_DEL -> "Backspace"
+            KeyEvent.KEYCODE_ESCAPE -> "Escape"
+            else -> event.unicodeChar.takeIf { it != 0 }?.toChar()?.toString()
+        }
+        val vm = key?.let { ui.keyInput(it) } ?: return super.onKeyDown(keyCode, event)
+        render(vm)
+        return true
+    }
 
+    /** Static scaffolding; everything with content is filled by [render]. */
+    private fun buildLayout(): LinearLayout {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(bg)
+            setBackgroundColor(if (dark) Color.rgb(9, 9, 11) else Color.rgb(244, 244, 245))
             setPadding(dp(20), dp(48), dp(20), dp(20))
         }
         exprView = TextView(this).apply {
@@ -75,89 +83,72 @@ class MainActivity : Activity() {
             minHeight = dp(28)
         }
         resultView = TextView(this).apply {
-            text = "0"
             gravity = Gravity.END
-            setTextColor(fg)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 48f)
             typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
             maxLines = 1
         }
-        root.addView(exprView, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        root.addView(resultView, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-
-        val grid = GridLayout(this).apply { columnCount = 4 }
-        for (key in keys) {
-            val button = Button(this).apply {
-                text = key.label
-                isAllCaps = false
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-                setTextColor(if (key.op) Color.WHITE else fg)
-                background = GradientDrawable().apply {
-                    cornerRadius = dp(14).toFloat()
-                    setColor(if (key.op) opBg else keyBg)
-                }
-                stateListAnimator = null
-                setOnClickListener { press(key) }
-            }
-            val params = GridLayout.LayoutParams(
-                GridLayout.spec(GridLayout.UNDEFINED),
-                GridLayout.spec(GridLayout.UNDEFINED, key.span, 1f),
-            ).apply {
-                width = 0
-                height = dp(64)
-                setMargins(dp(4), dp(4), dp(4), dp(4))
-            }
-            grid.addView(button, params)
-        }
-        root.addView(grid, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(12) })
-
+        keypad = GridLayout(this)
         historyView = TextView(this).apply {
             setTextColor(muted)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
             typeface = Typeface.MONOSPACE
         }
-        root.addView(historyView, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { topMargin = dp(16) })
-
-        root.addView(TextView(this).apply {
-            text = "Evaluated by Rust via UniFFI + JNA"
+        captionView = TextView(this).apply {
             gravity = Gravity.CENTER
             setTextColor(muted)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        })
+        }
+        root.addView(exprView, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        root.addView(resultView, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        root.addView(keypad, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = dp(12) })
+        root.addView(historyView, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f).apply { topMargin = dp(16) })
+        root.addView(captionView)
         return root
     }
 
-    private fun press(key: Key) {
-        when {
-            key.label == "C" -> setExpression("")
-            key.label == "⌫" -> setExpression(expression.dropLast(1))
-            key.label == "=" -> evaluate()
-            else -> setExpression(expression + key.insert)
+    private fun render(vm: ViewModel) {
+        exprView.text = vm.expression
+        resultView.text = vm.display
+        resultView.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (vm.isError) 22f else 48f)
+        resultView.setTextColor(if (vm.isError) Color.rgb(220, 38, 38) else fg)
+        historyView.text = vm.history.joinToString("\n") { "${it.expression} = ${it.result}" }
+        captionView.text = "${vm.caption} (UniFFI + JNA)"
+
+        keypad.removeAllViews()
+        keypad.columnCount = vm.keypad.maxOf { row -> row.keys.sumOf { it.span.toInt() } }
+        for (row in vm.keypad) {
+            for (key in row.keys) {
+                val isOperator = key.style == KeyStyle.OPERATOR
+                val button = Button(this).apply {
+                    text = key.label
+                    isAllCaps = false
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+                    setTextColor(if (isOperator) Color.WHITE else fg)
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(14).toFloat()
+                        setColor(keyColor(key.style))
+                    }
+                    stateListAnimator = null
+                    setOnClickListener { render(ui.press(key.id)) }
+                }
+                val params = GridLayout.LayoutParams(
+                    GridLayout.spec(GridLayout.UNDEFINED),
+                    GridLayout.spec(GridLayout.UNDEFINED, key.span.toInt(), 1f),
+                ).apply {
+                    width = 0
+                    height = dp(64)
+                    setMargins(dp(4), dp(4), dp(4), dp(4))
+                }
+                keypad.addView(button, params)
+            }
         }
     }
 
-    private fun setExpression(next: String) {
-        expression = next
-        exprView.text = expression
+    private fun keyColor(style: KeyStyle): Int = when (style) {
+        KeyStyle.OPERATOR -> Color.rgb(251, 146, 60)
+        KeyStyle.FUNCTION -> if (dark) Color.rgb(63, 63, 70) else Color.rgb(212, 212, 216)
+        KeyStyle.INPUT -> if (dark) Color.rgb(39, 39, 42) else Color.rgb(228, 228, 231)
     }
-
-    private fun evaluate() {
-        try {
-            resultView.text = calculator.evaluate(expression)
-            resultView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 48f)
-            resultView.setTextColor(if (isDarkMode()) Color.rgb(250, 250, 250) else Color.rgb(24, 24, 27))
-            historyView.text = calculator.history().reversed()
-                .joinToString("\n") { "${it.expression} = ${it.result}" }
-            setExpression("")
-        } catch (e: CalcException.Invalid) {
-            resultView.text = e.reason
-            resultView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-            resultView.setTextColor(Color.rgb(220, 38, 38))
-        }
-    }
-
-    private fun isDarkMode(): Boolean =
-        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 }
