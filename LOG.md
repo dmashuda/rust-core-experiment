@@ -838,3 +838,88 @@ point `lock_file` at them.
 | --- | --- |
 | Linux | bazelisk (plus curl, git, unzip and zip in the container, not proven minimal). No compiler, linker, libc headers, Python or JDK. Android additionally needs a local SDK/NDK until `hermetic_android_toolchains` is adopted, and an x86_64 host. |
 | macOS | Xcode (unavoidable for Apple targets; lock its version), plus the Android SDK/NDK for Android builds. |
+
+## 15. Hermetic Android SDK + NDK, built in-repo (no external toolchain module)
+
+Requirement: a hermetic Android toolchain without depending on
+`hermetic_android_toolchains`, limited to what this repo uses.
+
+`tools/android/toolchains.bzl`, about 200 lines, is a module extension with
+two repository rules:
+
+| Repo | Downloads (sha256-pinned) | Then |
+| --- | --- | --- |
+| `@androidsdk` | `platform-37.0_r02.zip` (android.jar etc.) and `build-tools_r36_{macosx,linux}.zip` (aapt2, d8, apksigner, zipalign) | Fills in **rules_android 0.8.0's own** `template.bzl`, plus a symlinked `helper.bzl`, exactly as `android_sdk_repository` does. |
+| `@androidndk` | `android-ndk-r30-{darwin,linux}.zip` | Lays out the same partial symlink tree and fills **rules_android_ndk 0.1.5's own** four templates, exactly as `android_ndk_repository` does, with API level 26. |
+| `@android_toolchain_status` | nothing | `HAS_ANDROID_TOOLCHAIN` for `ANDROID_TARGET_COMPATIBLE_WITH`. |
+
+Only the fetching is ours; BUILD generation reuses upstream templates, so
+the toolchain behaves identically. Deliberately **not** included:
+platform-tools (adb), the emulator and system images. Those are for running
+apps, not building them. Supported hosts are macOS (the NDK is universal)
+and x86_64 Linux. Google ships no arm64-Linux build-tools or NDK, so that
+host gets empty stubs and Android targets are skipped, as on Windows.
+
+Pinning: the URLs and SHA-1s come from Google's official package list
+(`dl.google.com/android/repository/repository2-3.xml`, the one sdkmanager
+uses). Each archive was downloaded once, its SHA-1 verified against Google's,
+and its sha256 computed for Bazel. Independent cross-check: the platform
+zip's sha256 matches the one hermetic_android_toolchains pins. Licensing:
+these are Google's packages under the Android SDK license, which was already
+accepted on this machine through Android Studio (`~/Library/Android/sdk/licenses/`).
+
+Wiring (`MODULE.bazel`): our extension provides `androidsdk`/`androidndk`,
+and `override_repo(android_sdk_repository_extension, "androidsdk")` points
+rules_android's **internal** `@androidsdk` at ours. rules_android registers
+SDK toolchains from its own extension, so without the override it would
+still read `$ANDROID_HOME`. The previous `tools/android/ndk.bzl` (optional
+local NDK) is deleted.
+
+### Verified
+
+- macOS with `ANDROID_HOME`/`ANDROID_NDK_HOME` **unset**: `bazel build //...`
+  and `bazel test //...` pass (7/7). The APK builds, and **zero** actions
+  in `bazel aquery 'deps(//apps/android:calc_android)'` reference
+  `~/Library/Android`. The generated `@androidsdk` contains only
+  `build-tools/` and `platforms/`.
+- The APK installed on the emulator and worked: `2×(3+4)^2` = 98, `ans÷7`
+  = 14, history, and `1÷0` gives "division by zero" (the emulator and adb
+  came from the local SDK; running isn't part of the build).
+- arm64 Linux container, no compiler: 5 pass and 2 Apple tests skipped. The
+  Android targets are skipped via the stubs.
+- **Not verified: building the APK on x86_64 Linux.** I tried it in an
+  amd64 container under emulation on this Apple Silicon Mac. Twice, Bazel
+  hung idle with already-exited `process-wrapper` children left `<defunct>`;
+  it never received their exit status. The second attempt used
+  `--spawn_strategy=local`, which didn't help, because that still uses
+  process-wrapper. Every action that ran had succeeded; the emulated
+  environment just can't finish a Bazel build. The Linux archives are
+  pinned and SHA-1-verified, but the first real x86_64 Linux CI run is the
+  actual test.
+
+### Findings
+
+1. **Read the *released* version of upstream code, not `main`.** My
+   reference clone of rules_android was `main`, whose SDK template loads
+   `helper.bzl` by absolute label. 0.8.0's template loads `":helper.bzl"`,
+   and its rule symlinks the file into the repo. That cost one failed build
+   ("cannot load ...androidsdk//:helper.bzl").
+2. **Generated repos use the *extension owner's* repo mapping.** The
+   reused `helper.bzl` loads `@rules_shell` and references
+   `@remote_java_tools`. Inside rules_android's extension those resolve
+   through rules_android's deps; inside ours, the root module had to add
+   `bazel_dep(rules_shell)` and
+   `use_repo(rules_java toolchains, "remote_java_tools")`.
+3. **NDK API level bug fixed along the way.** rules_android_ndk defaults the
+   API level to 31, but the manifest says `minSdkVersion 26`, so the Rust
+   `.so` could have used libc symbols missing on Android 8–11. Now
+   `MIN_SDK_VERSION = 26` in `toolchains.bzl` (keep it in sync with the
+   manifest). Verified from the `.note.android.ident` ELF note: API `0x1a`
+   = 26, NDK `r30`.
+4. Google's build-tools 36.0.0 zips unpack to `android-16/`, not `36.0.0/`,
+   so `stripPrefix` is version-specific. Check `unzip -Z1` on each archive
+   when bumping versions.
+5. Bumping versions means: find the package in `repository2-3.xml`,
+   download it, check its SHA-1 against the XML, record the sha256, and fix
+   the strip prefix. That's a few minutes per bump; it's the price of not
+   depending on a module that tracks versions for you.

@@ -377,28 +377,6 @@
   },
   "selectedYankedVersions": {},
   "moduleExtensions": {
-    "//tools/android:ndk.bzl%optional_android_ndk": {
-      "general": {
-        "bzlTransitiveDigest": "HaQxDorQuCCyxaak8pqhp/5OXEyx+mKDUVHILiMhlos=",
-        "usagesDigest": "sOGLqApV9cSaHL28PqoCLmp+aVzz8vCPon64708CJ+Q=",
-        "recordedInputs": [
-          "REPO_MAPPING:,rules_android_ndk rules_android_ndk+",
-          "ENV:ANDROID_NDK_HOME /Users/dmashuda/Library/Android/sdk/ndk/30.0.16248370"
-        ],
-        "generatedRepoSpecs": {
-          "androidndk": {
-            "repoRuleId": "@@rules_android_ndk+//:rules.bzl%android_ndk_repository",
-            "attributes": {}
-          },
-          "android_ndk_status": {
-            "repoRuleId": "@@//tools/android:ndk.bzl%_ndk_status",
-            "attributes": {
-              "present": true
-            }
-          }
-        }
-      }
-    },
     "@@aspect_rules_esbuild+//esbuild:extensions.bzl%esbuild": {
       "general": {
         "bzlTransitiveDigest": "9vMChUSqc01sNvL/GgQVBSNgqKWJTH5G6dcOoG8EuDo=",

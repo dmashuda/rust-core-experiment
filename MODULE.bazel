@@ -175,9 +175,10 @@ maven.install(
 use_repo(maven, "maven")
 
 ###############################################################################
-# Android. Both repos read the *local* installs: rules_android uses
-# $ANDROID_HOME (picks the highest platforms/android-* level), and
-# rules_android_ndk uses $ANDROID_NDK_HOME (needs NDK r25b+).
+# Android: hermetic SDK + NDK, downloaded and sha256-pinned by our own
+# extension (tools/android/toolchains.bzl). No ANDROID_HOME/ANDROID_NDK_HOME.
+# Hosts without Google tools (arm64 Linux, Windows) get empty stubs, and
+# Android targets are skipped there.
 ###############################################################################
 bazel_dep(name = "rules_android", version = "0.8.0")
 bazel_dep(name = "rules_android_ndk", version = "0.1.5")
@@ -188,19 +189,25 @@ remote_android_extensions = use_extension(
 )
 use_repo(remote_android_extensions, "android_tools")
 
+# The generated @androidsdk reuses rules_android's helper.bzl, which runs with
+# *our* repo mapping, so everything it references must be visible from here.
+bazel_dep(name = "rules_shell", version = "0.8.0")
+
+rules_java_toolchains = use_extension("@rules_java//java:extensions.bzl", "toolchains")
+use_repo(rules_java_toolchains, "remote_java_tools")
+
+android_toolchains = use_extension("//tools/android:toolchains.bzl", "android_toolchains")
+use_repo(android_toolchains, "android_toolchain_status", "androidndk", "androidsdk")
+
+# rules_android uses (and registers toolchains from) its own extension's
+# @androidsdk internally, which would read $ANDROID_HOME. Point it at ours.
 android_sdk_repository_extension = use_extension(
     "@rules_android//rules/android_sdk_repository:rule.bzl",
     "android_sdk_repository_extension",
 )
-use_repo(android_sdk_repository_extension, "androidsdk")
+override_repo(android_sdk_repository_extension, "androidsdk")
 
 register_toolchains("@androidsdk//:sdk-toolchain", "@androidsdk//:all")
-
-# Wrapped so a missing NDK yields an empty repo instead of failing every
-# build; see tools/android/ndk.bzl.
-optional_android_ndk = use_extension("//tools/android:ndk.bzl", "optional_android_ndk")
-use_repo(optional_android_ndk, "android_ndk_status", "androidndk")
-
 register_toolchains("@androidndk//:all")
 
 # A separate Maven repo for Android: JNA's AAR packaging carries the same

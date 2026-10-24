@@ -29,10 +29,9 @@ apps/android            renderer: Kotlin (plain Views) + android_binary; Rust sh
 
 Requirements: bazelisk. Bazel downloads Rust, Node, the JDK and (on Linux)
 a hermetic LLVM C/C++ toolchain, so a Linux box needs no compiler at all.
-Apple targets need macOS with Xcode; they are skipped elsewhere. Android
-targets need a local SDK and NDK (r25b+) via `ANDROID_HOME` and
-`ANDROID_NDK_HOME`; they are skipped when those are unset. See LOG.md
-sections 13–14.
+Bazel also downloads a pinned Android SDK and NDK (macOS and x86_64 Linux
+hosts), so no Android Studio is needed. Apple targets need macOS with Xcode
+and are skipped elsewhere. See LOG.md sections 13–15.
 
 | Web | macOS (offscreen snapshot test) | Android (emulator) |
 | --- | --- | --- |
