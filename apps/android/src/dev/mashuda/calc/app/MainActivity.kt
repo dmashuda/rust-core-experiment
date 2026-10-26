@@ -19,6 +19,7 @@ import android.widget.TextView
 import dev.mashuda.calc.CalculatorUi
 import dev.mashuda.calc.KeyStyle
 import dev.mashuda.calc.ViewModel
+import dev.mashuda.calc.keypad
 
 /**
  * Renderer only: draws the Rust ViewModel with plain Android Views and
@@ -40,7 +41,10 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        ui = CalculatorUi()
+        // A rotation or a light/dark switch recreates the Activity. Take the
+        // Rust calculator from the outgoing instance so the expression,
+        // display and history survive instead of silently resetting.
+        ui = lastNonConfigurationInstance as? CalculatorUi ?: CalculatorUi()
         setContentView(buildLayout())
         // Dark status-bar icons on the light background (light mode only).
         if (!dark) {
@@ -52,8 +56,12 @@ class MainActivity : Activity() {
         render(ui.view())
     }
 
+    /** Hands the live Rust object to the Activity that replaces this one. */
+    override fun onRetainNonConfigurationInstance(): Any = ui
+
     override fun onDestroy() {
-        ui.close()
+        // On a configuration change the next Activity takes it over instead.
+        if (!isChangingConfigurations) ui.close()
         super.onDestroy()
     }
 
@@ -87,7 +95,7 @@ class MainActivity : Activity() {
             typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
             maxLines = 1
         }
-        keypad = GridLayout(this)
+        keypad = buildKeypad()
         historyView = TextView(this).apply {
             setTextColor(muted)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
@@ -106,17 +114,12 @@ class MainActivity : Activity() {
         return root
     }
 
-    private fun render(vm: ViewModel) {
-        exprView.text = vm.expression
-        resultView.text = vm.display
-        resultView.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (vm.isError) 22f else 48f)
-        resultView.setTextColor(if (vm.isError) Color.rgb(220, 38, 38) else fg)
-        historyView.text = vm.history.joinToString("\n") { "${it.expression} = ${it.result}" }
-        captionView.text = "${vm.caption} (UniFFI + JNA)"
-
-        keypad.removeAllViews()
-        keypad.columnCount = vm.keypad.maxOf { row -> row.keys.sumOf { it.span.toInt() } }
-        for (row in vm.keypad) {
+    /** The keypad never changes, so its buttons are created once. */
+    private fun buildKeypad(): GridLayout {
+        val grid = GridLayout(this)
+        val rows = keypad()
+        grid.columnCount = rows.maxOf { row -> row.keys.sumOf { it.span.toInt() } }
+        for (row in rows) {
             for (key in row.keys) {
                 val isOperator = key.style == KeyStyle.OPERATOR
                 val button = Button(this).apply {
@@ -139,9 +142,19 @@ class MainActivity : Activity() {
                     height = dp(64)
                     setMargins(dp(4), dp(4), dp(4), dp(4))
                 }
-                keypad.addView(button, params)
+                grid.addView(button, params)
             }
         }
+        return grid
+    }
+
+    private fun render(vm: ViewModel) {
+        exprView.text = vm.expression
+        resultView.text = vm.display
+        resultView.setTextSize(TypedValue.COMPLEX_UNIT_SP, if (vm.isError) 22f else 48f)
+        resultView.setTextColor(if (vm.isError) Color.rgb(220, 38, 38) else fg)
+        historyView.text = vm.history.joinToString("\n") { "${it.expression} = ${it.result}" }
+        captionView.text = "${vm.caption} (UniFFI + JNA)"
     }
 
     private fun keyColor(style: KeyStyle): Int = when (style) {

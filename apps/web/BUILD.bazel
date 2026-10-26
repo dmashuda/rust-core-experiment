@@ -1,5 +1,5 @@
 load("@aspect_rules_esbuild//esbuild:defs.bzl", "esbuild")
-load("@aspect_rules_js//js:defs.bzl", "js_binary")
+load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_test")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_project")
 load("@bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 
@@ -12,12 +12,22 @@ ts_project(
     deps = ["//bindings/wasm:calc_wasm_js"],
 )
 
+# Minifying a fastbuild bundle only makes it unreadable; --config=release
+# (compilation_mode=opt) is what ships.
+config_setting(
+    name = "optimized",
+    values = {"compilation_mode": "opt"},
+)
+
 esbuild(
     name = "bundle",
     srcs = glob(["src/**/*.ts"]),
     entry_point = "src/main.ts",
     format = "esm",
-    minify = True,
+    minify = select({
+        ":optimized": True,
+        "//conditions:default": False,
+    }),
     output = "main.js",
     target = "es2022",
     deps = ["//bindings/wasm:calc_wasm_js"],
@@ -44,6 +54,14 @@ copy_to_directory(
         "bindings/wasm/calc_wasm_bindgen/": "",
     },
     visibility = ["//visibility:public"],
+)
+
+# Runs the bundled renderer against a minimal DOM (see the test file).
+js_test(
+    name = "renderer_test",
+    size = "small",
+    data = [":site"],
+    entry_point = "main.test.mjs",
 )
 
 # `bazel run //apps/web:serve` then open http://localhost:8080

@@ -16,6 +16,20 @@ final class CalculatorUITests: XCTestCase {
         XCTAssertEqual(model.view.expression, "1")
     }
 
+    /// The keypad is static state the model fetches once; history rows carry
+    /// ids so their view identity survives newer rows being prepended.
+    func testKeypadIsFetchedOnceAndHistoryRowsKeepTheirIdentity() {
+        let model = CalculatorModel()
+        XCTAssertEqual(model.keypad.count, 6)
+        XCTAssertEqual(model.keypad.first?.keys.first?.id, "clear")
+
+        for id in ["1", "evaluate"] { model.press(id) }
+        let older = model.view.history[0].id
+        for id in ["2", "evaluate"] { model.press(id) }
+        XCTAssertEqual(model.view.history[1].id, older, "an older row keeps its identity")
+        XCTAssertNotEqual(model.view.history[0].id, older)
+    }
+
     /// Renders the real view offscreen and saves a PNG into Bazel's undeclared
     /// test outputs (bazel-testlogs/.../test.outputs/), so the UI can be
     /// eyeballed without a display or screen-recording permission.

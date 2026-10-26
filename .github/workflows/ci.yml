@@ -1,0 +1,145 @@
+# Everything here is built and tested by Bazel, so CI is just Bazel. The point
+# of running on Linux is the hermeticity claim in LOG.md sections 13-15: the
+# toolchains (Rust, LLVM, Node, the JDK, the Android SDK/NDK) are all
+# downloaded or built by Bazel, so a runner with no compiler installed should
+# pass. Apple targets are skipped off macOS by //tools/apple:defs.bzl.
+#
+# macOS is deliberately not in the matrix. This repository is private, where
+# macOS runners bill at a 10x minute multiplier -- a full run cost about 250
+# billed minutes against a 2,000/month allowance, most of it the macOS leg.
+# The cost of that is losing CI coverage of the Apple targets: CalcFFITests,
+# CalculatorUITests and KeyboardTests only run when someone runs
+# `bazel test //...` on a Mac. To put it back, add macos-latest to `os` below;
+# everything else in this file already handles both.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: bazel test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # A cold Linux run compiles glibc, libc++, compiler-rt and libunwind from
+    # source for the hermetic toolchain. The caches below make later runs far
+    # shorter.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # The hermetic LLVM toolchain builds its runtimes from source, and that
+      # does not fit alongside the runner's preinstalled SDKs: the first run
+      # died with "No space left on device" while compiling glibc. None of
+      # what is deleted here is used -- every toolchain this repo needs is
+      # fetched by Bazel, the Android SDK and NDK included, so the host copies
+      # are dead weight. (That they can be deleted at all is the hermeticity
+      # claim being tested.)
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/.ghcup /opt/hostedtoolcache/CodeQL \
+                      /usr/share/swift /usr/local/share/powershell
+          sudo docker image prune -af || true
+          echo '--- after ---'
+          df -h /
+
+      # bazelisk ships on GitHub-hosted runners as `bazel` and reads
+      # .bazelversion. This step is first so that an image which ever stops
+      # shipping it fails here, obviously, rather than mid-build.
+      - name: Bazel version
+        run: bazel --version
+
+      # .bazelrc try-imports user.bazelrc, so every bazel command below picks
+      # these paths up without repeating flags. It is gitignored, and the
+      # paths are CI-specific so they cannot collide with a developer's own
+      # global Bazel caches.
+      - name: Point Bazel at the CI caches
+        run: |
+          printf 'common --repository_cache=%s\ncommon --disk_cache=%s\n' \
+            "$HOME/.cache/bazel-ci-repo" "$HOME/.cache/bazel-ci-disk" > user.bazelrc
+          cat user.bazelrc
+
+      # Restore and save are separate steps on purpose: the combined
+      # actions/cache only writes when the job succeeds, so the run that most
+      # needed to leave something behind -- the slow cold one that then failed
+      # -- left nothing, and every retry started over.
+      - name: Restore Bazel caches
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          # Only the disk cache. Measured on the first green run: the
+          # repository cache is 11 GB and the disk cache 1.8 GB, and the two
+          # together compressed to 5.8 GB per OS -- so with both matrix legs
+          # saving they blew GitHub's 10 GB-per-repository budget and evicted
+          # each other. The disk cache is the half worth keeping: it holds the
+          # compiled glibc, libc++, compiler-rt and Rust std. Re-downloading
+          # archives is comparatively quick.
+          path: ~/.cache/bazel-ci-disk
+          # Keyed on the lockfiles so a dependency bump starts from the
+          # nearest previous cache rather than from nothing, and on the run id
+          # because a cache entry cannot be overwritten once written.
+          key: bazel-v1-${{ matrix.os }}-${{ hashFiles('MODULE.bazel.lock', 'maven_install.json', 'maven_android_install.json', 'pnpm-lock.yaml') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            bazel-v1-${{ matrix.os }}-${{ hashFiles('MODULE.bazel.lock', 'maven_install.json', 'maven_android_install.json', 'pnpm-lock.yaml') }}-
+            bazel-v1-${{ matrix.os }}-
+
+      - name: Test everything
+        run: bazel test --keep_going //...
+
+      - name: Clippy
+        run: |
+          bazel build --keep_going \
+            --aspects=@rules_rust//rust:defs.bzl%rust_clippy_aspect \
+            --output_groups=clippy_checks \
+            //core/... //bindings/... //tools/...
+
+      # The .rustfmt.toml to check against comes from .bazelrc.
+      - name: Rustfmt
+        run: |
+          bazel build --keep_going \
+            --aspects=@rules_rust//rust:defs.bzl%rustfmt_aspect \
+            --output_groups=rustfmt_checks \
+            //core/... //bindings/... //tools/...
+
+      - name: Release web bundle
+        run: bazel build --config=release //apps/web:site
+
+      # Sizes and headroom, so the cache budget can be tuned from real numbers
+      # rather than guesses (GitHub allows 10 GB of caches per repository).
+      - name: Disk report
+        if: always()
+        run: |
+          df -h / || true
+          du -sh ~/.cache/bazel-ci-repo ~/.cache/bazel-ci-disk 2>/dev/null || true
+
+      - name: Save Bazel caches
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/bazel-ci-disk
+          key: ${{ steps.restore.outputs.cache-primary-key }}
+
+      - name: Upload failed test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testlogs-${{ matrix.os }}
+          path: bazel-testlogs/**
+          if-no-files-found: ignore

@@ -33,6 +33,7 @@ js_library(
 
 js_test(
     name = "calc_wasm_test",
+    size = "small",
     data = [":calc_wasm_js"],
     entry_point = "calc_wasm.test.mjs",
 )

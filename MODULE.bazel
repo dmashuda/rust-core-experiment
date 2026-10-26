@@ -6,7 +6,6 @@ module(name = "rust_core_experiment")
 # C/C++ toolchain, and only apple_support's can target iOS/macOS properly.
 bazel_dep(name = "apple_support", version = "2.10.1")
 bazel_dep(name = "platforms", version = "1.1.0")
-bazel_dep(name = "bazel_skylib", version = "1.9.2")
 bazel_dep(name = "rules_cc", version = "0.2.27")
 bazel_dep(name = "rules_rust", version = "0.74.0")
 bazel_dep(name = "rules_swift", version = "4.2.2")
@@ -80,7 +79,6 @@ CRATE_TRIPLES = [
     "aarch64-apple-ios",
     "aarch64-apple-ios-sim",
     "aarch64-linux-android",
-    "x86_64-linux-android",
     "wasm32-unknown-unknown",
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
@@ -207,6 +205,8 @@ android_sdk_repository_extension = use_extension(
 )
 override_repo(android_sdk_repository_extension, "androidsdk")
 
+# :sdk-toolchain (an alias for the real one) must come first: @androidsdk//:all
+# also holds a sdk-dummy-toolchain, and the first match wins.
 register_toolchains("@androidsdk//:sdk-toolchain", "@androidsdk//:all")
 register_toolchains("@androidndk//:all")
 

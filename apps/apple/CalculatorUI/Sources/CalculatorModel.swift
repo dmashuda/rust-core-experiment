@@ -8,6 +8,10 @@ import Observation
 public final class CalculatorModel {
     public private(set) var view: ViewModel
 
+    /// The keypad is static, so it is fetched from Rust once per screen rather
+    /// than arriving in every `ViewModel`.
+    public let keypad: [KeyRow] = CalcFFI.keypad()
+
     private let ui = CalculatorUi()
 
     public init() {

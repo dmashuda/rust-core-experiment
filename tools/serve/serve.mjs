@@ -1,8 +1,8 @@
 // Minimal static file server for local development (no npm dependencies).
-// Usage: node serve.mjs <dir> [port]
+// Usage: node serve.mjs <dir> [port]   (port 0 picks a free one)
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
-import { extname, join, normalize, resolve } from "node:path";
+import { extname, join, normalize, resolve, sep } from "node:path";
 
 const root = resolve(process.argv[2] ?? ".");
 const port = Number(process.argv[3] ?? process.env.PORT ?? 8080);
@@ -15,11 +15,22 @@ const TYPES = {
   ".wasm": "application/wasm",
 };
 
-createServer(async (req, res) => {
-  const urlPath = decodeURIComponent(new URL(req.url, "http://x").pathname);
-  let file = normalize(join(root, urlPath));
-  if (!file.startsWith(root)) {
-    res.writeHead(403).end();
+const server = createServer(async (req, res) => {
+  let file;
+  try {
+    // URL parsing folds "/../" away, but percent-encoded separators survive it
+    // ("/%2e%2e%2fx" decodes to "/../x"), so the root is re-checked below.
+    // decodeURIComponent also throws on a malformed escape such as "/%".
+    const urlPath = decodeURIComponent(new URL(req.url, "http://x").pathname);
+    file = normalize(join(root, urlPath));
+  } catch {
+    res.writeHead(400).end("bad request");
+    return;
+  }
+  // The separator matters: a bare prefix test would also accept siblings of
+  // the root whose names merely start with it, like "<root>-secrets".
+  if (file !== root && !file.startsWith(root + sep)) {
+    res.writeHead(403).end("forbidden");
     return;
   }
   try {
@@ -30,4 +41,8 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end("not found");
   }
-}).listen(port, () => console.log(`serving ${root} at http://localhost:${port}`));
+});
+
+server.listen(port, "127.0.0.1", () =>
+  console.log(`serving ${root} at http://127.0.0.1:${server.address().port}`),
+);
