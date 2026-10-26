@@ -1,0 +1,21 @@
+"""The Rust toolchain: one compiler, every target triple a front end needs."""
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2024",
+    extra_target_triples = [
+        # Apple
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "aarch64-apple-ios",
+        "aarch64-apple-ios-sim",
+        # Android (arm64-v8a: devices and the Apple Silicon emulator)
+        "aarch64-linux-android",
+        # Web
+        "wasm32-unknown-unknown",
+    ],
+    versions = ["1.98.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
