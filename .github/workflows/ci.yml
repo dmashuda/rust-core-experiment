@@ -75,13 +75,18 @@ jobs:
         id: restore
         uses: actions/cache/restore@v4
         with:
-          path: |
-            ~/.cache/bazel-ci-repo
-            ~/.cache/bazel-ci-disk
+          # Only the disk cache. Measured on the first green run: the
+          # repository cache is 11 GB and the disk cache 1.8 GB, and the two
+          # together compressed to 5.8 GB per OS -- so with both matrix legs
+          # saving they blew GitHub's 10 GB-per-repository budget and evicted
+          # each other. The disk cache is the half worth keeping: it holds the
+          # compiled glibc, libc++, compiler-rt and Rust std. Re-downloading
+          # archives is comparatively quick.
+          path: ~/.cache/bazel-ci-disk
           # Keyed on the lockfiles so a dependency bump starts from the
           # nearest previous cache rather than from nothing, and on the run id
           # because a cache entry cannot be overwritten once written.
-          key: bazel-v1-${{ matrix.os }}-${{ hashFiles('MODULE.bazel.lock', 'maven_install.json', 'maven_android_install.json', 'pnpm-lock.yaml') }}-${{ github.run_id }}
+          key: bazel-v1-${{ matrix.os }}-${{ hashFiles('MODULE.bazel.lock', 'maven_install.json', 'maven_android_install.json', 'pnpm-lock.yaml') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             bazel-v1-${{ matrix.os }}-${{ hashFiles('MODULE.bazel.lock', 'maven_install.json', 'maven_android_install.json', 'pnpm-lock.yaml') }}-
             bazel-v1-${{ matrix.os }}-
@@ -120,9 +125,7 @@ jobs:
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
-          path: |
-            ~/.cache/bazel-ci-repo
-            ~/.cache/bazel-ci-disk
+          path: ~/.cache/bazel-ci-disk
           key: ${{ steps.restore.outputs.cache-primary-key }}
 
       - name: Upload failed test logs

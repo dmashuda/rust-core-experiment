@@ -23,9 +23,11 @@ swift_library(
 
 macos_unit_test(
     name = "CalculatorUITests",
-    # Mostly xctest start-up; "small" would warn that the timeout is too big.
+    # Mostly xctest start-up: ~23s here, but over 60s on a GitHub runner, so
+    # this keeps the 300s "medium" timeout. Bazel warns that the timeout is
+    # larger than the observed runtime; that warning is wrong for this test,
+    # which is exactly how CI caught it (TIMEOUT in 60.2s).
     size = "medium",
-    timeout = "short",
     target_compatible_with = APPLE_TARGET_COMPATIBLE_WITH,
     minimum_os_version = "14.0",
     deps = [":CalculatorUITestsLib"],
