@@ -4,13 +4,16 @@
 # downloaded or built by Bazel, so a runner with no compiler installed should
 # pass. Apple targets are skipped off macOS by //tools/apple:defs.bzl.
 #
-# macOS is deliberately not in the matrix. This repository is private, where
-# macOS runners bill at a 10x minute multiplier -- a full run cost about 250
-# billed minutes against a 2,000/month allowance, most of it the macOS leg.
+# macOS is deliberately not in the matrix. Not for billing -- GitHub-hosted
+# runners are free on a public repository, macOS included -- but for the cache
+# budget: GitHub allows 10 GB of caches per repository, and with both legs
+# saving, the two compressed to 5.8 GB apiece and evicted each other, so
+# neither leg reliably found a warm cache (see the Restore step below).
 # The cost of that is losing CI coverage of the Apple targets: CalcFFITests,
 # CalculatorUITests and KeyboardTests only run when someone runs
-# `bazel test //...` on a Mac. To put it back, add macos-latest to `os` below;
-# everything else in this file already handles both.
+# `bazel test //...` on a Mac. To put it back, add macos-latest to `os` below
+# and scope the Save step to `runner.os == 'Linux'` so the legs stop
+# competing for the budget; everything else in this file already handles both.
 name: CI
 
 on:
