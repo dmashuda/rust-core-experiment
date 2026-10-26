@@ -1,4 +1,17 @@
-"""Rust-core monorepo: one Rust core, many native front ends, all built by Bazel."""
+"""Rust-core monorepo: one Rust core, many native front ends, all built by Bazel.
+
+The toolchains themselves live in bazel/*.MODULE.bazel, pulled in by the
+include() calls at the bottom. Two kinds of ordering are load-bearing here, so
+neither the dependencies above nor the includes below are free to be
+rearranged:
+
+  * apple_support is depended on before rules_cc, because Bazel takes the
+    first registered C/C++ toolchain and only apple_support's can target iOS
+    and macOS.
+  * register_toolchains() precedence follows the order the calls are reached,
+    which across the includes means Rust, then LLVM, then the Android SDK and
+    NDK.
+"""
 
 module(name = "rust_core_experiment")
 
@@ -11,213 +24,10 @@ bazel_dep(name = "rules_rust", version = "0.74.0")
 bazel_dep(name = "rules_swift", version = "4.2.2")
 bazel_dep(name = "rules_apple", version = "5.3.1")
 
-###############################################################################
-# Rust toolchain
-###############################################################################
-rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
-rust.toolchain(
-    edition = "2024",
-    extra_target_triples = [
-        # Apple
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin",
-        "aarch64-apple-ios",
-        "aarch64-apple-ios-sim",
-        # Android (arm64-v8a: devices and the Apple Silicon emulator)
-        "aarch64-linux-android",
-        # Web
-        "wasm32-unknown-unknown",
-    ],
-    versions = ["1.98.0"],
-)
-use_repo(rust, "rust_toolchains")
-
-register_toolchains("@rust_toolchains//:all")
-
-###############################################################################
-# Hermetic C/C++ toolchain on Linux (hermetic-llvm, module "llvm").
-#
-# Prebuilt clang/lld plus glibc, libc++, compiler-rt and libunwind built from
-# source in Bazel: a Linux host needs no gcc, binutils, libc headers or
-# python. It also links every Rust binary. Registered for Linux exec/target
-# only; on macOS, apple_support's Xcode toolchain stays in charge (Apple
-# targets need Xcode regardless), and Android uses the NDK.
-###############################################################################
-bazel_dep(name = "llvm", version = "0.8.25")
-
-llvm_toolchain = use_extension("@llvm//extensions:toolchain.bzl", "toolchain")
-llvm_toolchain.exec(arch = "aarch64", os = "linux")
-llvm_toolchain.exec(arch = "x86_64", os = "linux")
-llvm_toolchain.target(arch = "aarch64", os = "linux")
-llvm_toolchain.target(arch = "x86_64", os = "linux")
-use_repo(llvm_toolchain, "llvm_toolchains")
-
-register_toolchains("@llvm_toolchains//:all")
-
-# Diamond fix: llvm needs rules_go 0.62, which lifts gazelle to 0.51.3, whose
-# Go tools need Go >= 1.24.12. rules_android (which builds Go tools) pins its
-# Go SDK to 1.22.4. The root module's SDK wins, so pin a newer one here.
-bazel_dep(name = "rules_go", version = "0.62.0")
-
-go_sdk = use_extension("@rules_go//go:extensions.bzl", "go_sdk")
-go_sdk.download(version = "1.25.0")
-
-###############################################################################
-# Third-party crates (crate_universe, no Cargo.toml: specs live here)
-#
-# Two separate repos so the bindgen CLI's heavy deps (clap, askama, goblin...)
-# never get feature-unified into the library that ships inside the apps.
-# UniFFI's runtime and bindgen must be the *same* version: the bindgen reads
-# metadata the runtime macros embed in the compiled library.
-###############################################################################
-UNIFFI_VERSION = "=0.32.2"
-
-# Every triple some front end compiles Rust for (plus Linux for CI).
-CRATE_TRIPLES = [
-    "aarch64-apple-darwin",
-    "x86_64-apple-darwin",
-    "aarch64-apple-ios",
-    "aarch64-apple-ios-sim",
-    "aarch64-linux-android",
-    "wasm32-unknown-unknown",
-    "x86_64-unknown-linux-gnu",
-    "aarch64-unknown-linux-gnu",
-]
-
-crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
-
-# Runtime deps linked into app binaries.
-crate.spec(
-    default_features = False,
-    package = "uniffi",
-    repositories = ["crates"],
-    version = UNIFFI_VERSION,
-)
-crate.from_specs(
-    name = "crates",
-    supported_platform_triples = CRATE_TRIPLES,
-)
-
-# Build-time tools (run on the exec platform only).
-# default_features = False drops `cargo-metadata`, so the bindgen never tries
-# to shell out to `cargo metadata` (impossible inside a Bazel sandbox).
-crate.spec(
-    default_features = False,
-    features = ["cli"],
-    package = "uniffi",
-    repositories = ["tool_crates"],
-    version = UNIFFI_VERSION,
-)
-crate.from_specs(
-    name = "tool_crates",
-    supported_platform_triples = [
-        "aarch64-apple-darwin",
-        "x86_64-apple-darwin",
-        "x86_64-unknown-linux-gnu",
-        "aarch64-unknown-linux-gnu",
-    ],
-)
-use_repo(crate, "crates", "tool_crates")
-
-###############################################################################
-# Web: wasm-bindgen. Ships its CLI *and* a version-matched wasm-bindgen crate
-# at @rules_rust_wasm_bindgen//3rdparty:wasm_bindgen.
-###############################################################################
-bazel_dep(name = "rules_rust_wasm_bindgen", version = "0.74.0")
-
-###############################################################################
-# JavaScript / TypeScript (web front end)
-###############################################################################
-bazel_dep(name = "bazel_lib", version = "3.7.0")
-bazel_dep(name = "aspect_rules_js", version = "3.5.2")
-bazel_dep(name = "aspect_rules_ts", version = "3.10.1")
-bazel_dep(name = "aspect_rules_esbuild", version = "0.27.1")
-bazel_dep(name = "rules_nodejs", version = "6.7.7")
-
-node = use_extension("@rules_nodejs//nodejs:extensions.bzl", "node")
-node.toolchain(node_version = "22.22.0")
-
-npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
-npm.npm_translate_lock(
-    name = "npm",
-    data = ["//:pnpm-workspace.yaml"],
-    pnpm_lock = "//:pnpm-lock.yaml",
-    verify_node_modules_ignored = "//:.bazelignore",
-)
-use_repo(npm, "npm")
-
-rules_ts_ext = use_extension("@aspect_rules_ts//ts:extensions.bzl", "ext")
-rules_ts_ext.deps(ts_version_from = "//:package.json")
-use_repo(rules_ts_ext, "npm_typescript")
-
-###############################################################################
-# JVM / Kotlin (UniFFI Kotlin bindings; the foundation for Android)
-###############################################################################
-bazel_dep(name = "rules_java", version = "9.9.0")
-bazel_dep(name = "rules_kotlin", version = "2.4.21")
-bazel_dep(name = "rules_jvm_external", version = "7.2")
-
-maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
-maven.install(
-    artifacts = [
-        # UniFFI's Kotlin bindings call into Rust through JNA.
-        # (On Android use the "net.java.dev.jna:jna:5.17.0@aar" packaging,
-        # which carries libjnidispatch.so for each ABI.)
-        "net.java.dev.jna:jna:5.17.0",
-        "junit:junit:4.13.2",
-    ],
-    # Pinned (versions + sha256). After changing artifacts: bazel run @maven//:pin
-    lock_file = "//:maven_install.json",
-    repositories = ["https://repo1.maven.org/maven2"],
-)
-use_repo(maven, "maven")
-
-###############################################################################
-# Android: hermetic SDK + NDK, downloaded and sha256-pinned by our own
-# extension (tools/android/toolchains.bzl). No ANDROID_HOME/ANDROID_NDK_HOME.
-# Hosts without Google tools (arm64 Linux, Windows) get empty stubs, and
-# Android targets are skipped there.
-###############################################################################
-bazel_dep(name = "rules_android", version = "0.8.0")
-bazel_dep(name = "rules_android_ndk", version = "0.1.5")
-
-remote_android_extensions = use_extension(
-    "@rules_android//bzlmod_extensions:android_extensions.bzl",
-    "remote_android_tools_extensions",
-)
-use_repo(remote_android_extensions, "android_tools")
-
-# The generated @androidsdk reuses rules_android's helper.bzl, which runs with
-# *our* repo mapping, so everything it references must be visible from here.
-bazel_dep(name = "rules_shell", version = "0.8.0")
-
-rules_java_toolchains = use_extension("@rules_java//java:extensions.bzl", "toolchains")
-use_repo(rules_java_toolchains, "remote_java_tools")
-
-android_toolchains = use_extension("//tools/android:toolchains.bzl", "android_toolchains")
-use_repo(android_toolchains, "android_toolchain_status", "androidndk", "androidsdk")
-
-# rules_android uses (and registers toolchains from) its own extension's
-# @androidsdk internally, which would read $ANDROID_HOME. Point it at ours.
-android_sdk_repository_extension = use_extension(
-    "@rules_android//rules/android_sdk_repository:rule.bzl",
-    "android_sdk_repository_extension",
-)
-override_repo(android_sdk_repository_extension, "androidsdk")
-
-# :sdk-toolchain (an alias for the real one) must come first: @androidsdk//:all
-# also holds a sdk-dummy-toolchain, and the first match wins.
-register_toolchains("@androidsdk//:sdk-toolchain", "@androidsdk//:all")
-register_toolchains("@androidndk//:all")
-
-# A separate Maven repo for Android: JNA's AAR packaging carries the same
-# classes as the desktop jar in @maven, plus libjnidispatch.so per ABI.
-# Mixing both on one classpath would be a duplicate-class error at dexing.
-maven.install(
-    name = "maven_android",
-    artifacts = ["net.java.dev.jna:jna:aar:5.17.0"],
-    # After changing artifacts: bazel run @maven_android//:pin
-    lock_file = "//:maven_android_install.json",
-    repositories = ["https://repo1.maven.org/maven2"],
-)
-use_repo(maven, "maven_android")
+# Order matters: see the docstring above.
+include("//bazel:rust.MODULE.bazel")
+include("//bazel:cc_linux.MODULE.bazel")
+include("//bazel:crates.MODULE.bazel")
+include("//bazel:web.MODULE.bazel")
+include("//bazel:jvm.MODULE.bazel")
+include("//bazel:android.MODULE.bazel")

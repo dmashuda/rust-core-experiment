@@ -1,0 +1,52 @@
+"""Android: a hermetic SDK + NDK, downloaded and sha256-pinned by our own
+extension (//tools/android:toolchains.bzl). No ANDROID_HOME or
+ANDROID_NDK_HOME is read. Hosts Google ships no tools for (arm64 Linux,
+Windows) get empty stubs, and Android targets are skipped there.
+"""
+
+bazel_dep(name = "rules_android", version = "0.8.0")
+bazel_dep(name = "rules_android_ndk", version = "0.1.5")
+
+remote_android_extensions = use_extension(
+    "@rules_android//bzlmod_extensions:android_extensions.bzl",
+    "remote_android_tools_extensions",
+)
+use_repo(remote_android_extensions, "android_tools")
+
+# The generated @androidsdk reuses rules_android's helper.bzl, which runs with
+# *our* repo mapping, so everything it references must be visible from here.
+bazel_dep(name = "rules_shell", version = "0.8.0")
+
+rules_java_toolchains = use_extension("@rules_java//java:extensions.bzl", "toolchains")
+use_repo(rules_java_toolchains, "remote_java_tools")
+
+android_toolchains = use_extension("//tools/android:toolchains.bzl", "android_toolchains")
+use_repo(android_toolchains, "android_toolchain_status", "androidndk", "androidsdk")
+
+# rules_android uses (and registers toolchains from) its own extension's
+# @androidsdk internally, which would read $ANDROID_HOME. Point it at ours.
+android_sdk_repository_extension = use_extension(
+    "@rules_android//rules/android_sdk_repository:rule.bzl",
+    "android_sdk_repository_extension",
+)
+override_repo(android_sdk_repository_extension, "androidsdk")
+
+# :sdk-toolchain (an alias for the real one) must come first: @androidsdk//:all
+# also holds a sdk-dummy-toolchain, and the first match wins.
+register_toolchains("@androidsdk//:sdk-toolchain", "@androidsdk//:all")
+register_toolchains("@androidndk//:all")
+
+# A separate Maven repo for Android: JNA's AAR packaging carries the same
+# classes as the desktop jar in @maven, plus libjnidispatch.so per ABI.
+# Mixing both on one classpath would be a duplicate-class error at dexing.
+# (Re-declaring the extension proxy here is fine: tags from every use in a
+# module are merged, so this adds to the install in jvm.MODULE.bazel.)
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven.install(
+    name = "maven_android",
+    artifacts = ["net.java.dev.jna:jna:aar:5.17.0"],
+    # After changing artifacts: bazel run @maven_android//:pin
+    lock_file = "//:maven_android_install.json",
+    repositories = ["https://repo1.maven.org/maven2"],
+)
+use_repo(maven, "maven_android")

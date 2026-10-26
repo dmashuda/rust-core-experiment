@@ -16,6 +16,7 @@ core/calc_ui            Rust: UI view model (keypad, input, keyboard, errors, hi
 bindings/wasm           wasm-bindgen wrapper of calc_ui → JS/TS (web)
 bindings/uniffi         UniFFI wrapper of calc_ui      → Swift (Apple) + Kotlin (Android/JVM)
 tools/uniffi            uniffi-bindgen(-swift) built from source as rust_binary
+bazel/*.MODULE.bazel    the toolchains, one file per stack, include()d by MODULE.bazel
 apps/web                renderer: TypeScript + esbuild, served by a tiny Node server
 apps/apple/CalculatorUI renderer: SwiftUI, shared by macOS and iOS
 apps/macos, apps/ios    macos_application / ios_application

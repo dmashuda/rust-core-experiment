@@ -1,0 +1,24 @@
+"""JVM and Kotlin: the UniFFI Kotlin bindings, and the foundation for Android.
+
+The Android-only half of Maven lives in android.MODULE.bazel, because its JNA
+artifact must not share a classpath with the one below.
+"""
+
+bazel_dep(name = "rules_java", version = "9.9.0")
+bazel_dep(name = "rules_kotlin", version = "2.4.21")
+bazel_dep(name = "rules_jvm_external", version = "7.2")
+
+maven = use_extension("@rules_jvm_external//:extensions.bzl", "maven")
+maven.install(
+    artifacts = [
+        # UniFFI's Kotlin bindings call into Rust through JNA.
+        # (On Android use the "net.java.dev.jna:jna:5.17.0@aar" packaging,
+        # which carries libjnidispatch.so for each ABI.)
+        "net.java.dev.jna:jna:5.17.0",
+        "junit:junit:4.13.2",
+    ],
+    # Pinned (versions + sha256). After changing artifacts: bazel run @maven//:pin
+    lock_file = "//:maven_install.json",
+    repositories = ["https://repo1.maven.org/maven2"],
+)
+use_repo(maven, "maven")
