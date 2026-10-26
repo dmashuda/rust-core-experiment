@@ -44,8 +44,11 @@ bazel build --aspects=@rules_rust//rust:defs.bzl%rustfmt_aspect \
     --output_groups=rustfmt_checks //core/... //bindings/... //tools/...
 ```
 
-CI (`.github/workflows/ci.yml`) runs all of those on Linux and macOS, which is
-also what keeps the hermeticity claims below honest.
+CI (`.github/workflows/ci.yml`) runs all of those on Linux, which is also what
+keeps the hermeticity claims below honest. The Apple tests are not covered
+there: macOS runners bill at a 10x multiplier on a private repository, so they
+are left to `bazel test //...` on a Mac (see the comment at the top of the
+workflow for how to re-enable them).
 
 Requirements: bazelisk. Bazel downloads Rust, Node, the JDK and (on Linux)
 a hermetic LLVM C/C++ toolchain, so a Linux box needs no compiler at all.

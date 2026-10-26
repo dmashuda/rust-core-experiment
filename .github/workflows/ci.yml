@@ -1,8 +1,16 @@
 # Everything here is built and tested by Bazel, so CI is just Bazel. The point
-# of the matrix is the hermeticity claim in LOG.md sections 13-15: on Linux the
+# of running on Linux is the hermeticity claim in LOG.md sections 13-15: the
 # toolchains (Rust, LLVM, Node, the JDK, the Android SDK/NDK) are all
 # downloaded or built by Bazel, so a runner with no compiler installed should
 # pass. Apple targets are skipped off macOS by //tools/apple:defs.bzl.
+#
+# macOS is deliberately not in the matrix. This repository is private, where
+# macOS runners bill at a 10x minute multiplier -- a full run cost about 250
+# billed minutes against a 2,000/month allowance, most of it the macOS leg.
+# The cost of that is losing CI coverage of the Apple targets: CalcFFITests,
+# CalculatorUITests and KeyboardTests only run when someone runs
+# `bazel test //...` on a Mac. To put it back, add macos-latest to `os` below;
+# everything else in this file already handles both.
 name: CI
 
 on:
@@ -29,7 +37,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
 
