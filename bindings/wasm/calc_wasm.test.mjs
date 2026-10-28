@@ -2,7 +2,7 @@
 // the Rust -> wasm -> JS path without a browser.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import init, { CalculatorUi, KeyStyle, keypad } from "./calc_wasm_bindgen/calc.js";
+import init, { CalculatorUi, KeyStyle, keypad, openCalculator } from "./calc_wasm_bindgen/calc.js";
 
 const wasm = await readFile(new URL("./calc_wasm_bindgen/calc_bg.wasm", import.meta.url));
 await init({ module_or_path: wasm });
@@ -57,4 +57,21 @@ assert.equal(ui.keyInput("Tab"), undefined);
 ui.keyInput("Escape");
 ui.keyInput("9");
 assert.equal(ui.keyInput("Enter").display, "9");
+// openCalculator() keeps history in SQLite. Node has no OPFS, so this
+// exercises the degraded path: still SQLite, still compiled to wasm, just
+// held in memory -- and the caption has to say so rather than imply the
+// history is being kept.
+const sqlite = await openCalculator("calc-history.db");
+let sv = sqlite.view();
+assert.match(sv.caption, /^Evaluated by Rust, history in SQLite 3\./, sv.caption);
+assert.match(sv.caption, /memory, no OPFS: /, sv.caption);
+for (const id of ["6", "*", "7", "evaluate"]) sv = sqlite.press(id);
+assert.equal(sv.display, "42");
+assert.deepEqual(
+  sv.history.map((h) => [h.id, h.expression, h.result]),
+  [[1n, "6*7", "42"]],
+  "the row came back out of SQLite, with the id SQLite assigned",
+);
+assert.equal(sqlite.press("+").expression, "ans+");
+
 console.log("wasm bindings OK");

@@ -19,16 +19,33 @@ config_setting(
     values = {"compilation_mode": "opt"},
 )
 
+MINIFY = select({
+    ":optimized": True,
+    "//conditions:default": False,
+})
+
+# The page: DOM only. It never loads the wasm, so this bundle stays tiny.
 esbuild(
     name = "bundle",
     srcs = glob(["src/**/*.ts"]),
     entry_point = "src/main.ts",
     format = "esm",
-    minify = select({
-        ":optimized": True,
-        "//conditions:default": False,
-    }),
+    minify = MINIFY,
     output = "main.js",
+    target = "es2022",
+    deps = ["//bindings/wasm:calc_wasm_js"],
+)
+
+# The calculator: wasm plus its SQLite history, in a dedicated worker because
+# the OPFS VFS needs createSyncAccessHandle. Bundled separately because
+# `new Worker(url)` loads a file of its own.
+esbuild(
+    name = "worker_bundle",
+    srcs = glob(["src/**/*.ts"]),
+    entry_point = "src/worker.ts",
+    format = "esm",
+    minify = MINIFY,
+    output = "worker.js",
     target = "es2022",
     deps = ["//bindings/wasm:calc_wasm_js"],
 )
@@ -40,9 +57,10 @@ copy_to_directory(
         "index.html",
         "style.css",
         ":bundle",
+        ":worker_bundle",
         "//bindings/wasm:calc_wasm_bindgen",
     ],
-    # Only the .wasm is needed at runtime; calc.js is already inside main.js.
+    # Only the .wasm is needed at runtime; calc.js is already inside worker.js.
     exclude_srcs_patterns = [
         "**/*.d.ts",
         "**/calc.js",

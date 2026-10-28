@@ -1,6 +1,6 @@
 load("@aspect_rules_js//js:defs.bzl", "js_library", "js_test")
 load("@rules_rust//rust:defs.bzl", "rust_shared_library")
-load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen")
+load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen", "rust_wasm_bindgen_test")
 
 # Compiled for wasm32 only: rust_wasm_bindgen below transitions into the
 # wasm platform, so this target is never built for the host.
@@ -9,8 +9,14 @@ rust_shared_library(
     srcs = ["src/lib.rs"],
     target_compatible_with = ["@platforms//cpu:wasm32"],
     deps = [
+        "//core/calc_core",
+        "//core/calc_history_sqlite",
         "//core/calc_ui",
-        "@rules_rust_wasm_bindgen//3rdparty:wasm_bindgen",
+        "@crates//:rusqlite",
+        "@crates//:sqlite-wasm-rs",
+        "@crates//:sqlite-wasm-vfs",
+        "@crates//:wasm-bindgen",
+        "@crates//:wasm-bindgen-futures",
     ],
 )
 
@@ -21,6 +27,13 @@ rust_wasm_bindgen(
     target = "web",
     visibility = ["//visibility:public"],
     wasm_file = ":calc_wasm",
+)
+
+# The crate's own #[wasm_bindgen_test]s, in headless Chrome. The only place
+# OPFS exists, so the only place the durable history can be tested.
+rust_wasm_bindgen_test(
+    name = "calc_wasm_browser_test",
+    wasm = ":calc_wasm_bindgen",
 )
 
 # The same outputs, wrapped as a JS library so ts_project/esbuild targets can

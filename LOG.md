@@ -57,6 +57,13 @@ gotchas: rules_android silently drops rlibs, so ship a cdylib via
 `--android_platforms` needs a repo-qualified `@@//` label. rules_android's
 tools need Java 17 flags.
 
+**Update: history is in SQLite** (section 16). One `rusqlite` dependency
+and one `HistoryStore` implementation serve all four platforms -- a file in
+the app sandbox on Apple and Android, OPFS in the browser. Getting there
+needed a wasm32 C/C++ toolchain, our own wasm-bindgen CLI (which **reverses
+finding 4 above**), and the web app split into a renderer and a worker,
+because the OPFS VFS only works in one.
+
 Not done: running on an iOS simulator (no runtime installed), and a signed
 iOS device build (needs a provisioning profile).
 
@@ -923,3 +930,144 @@ local NDK) is deleted.
    download it, check its SHA-1 against the XML, record the sha256, and fix
    the strip prefix. That's a few minutes per bump; it's the price of not
    depending on a module that tracks versions for you.
+
+---
+
+## 16. SQLite history, on all four platforms (2026-10-27)
+
+Question asked: can the Rust core keep its history in SQLite? Short answer:
+yes, on macOS, iOS, Android, Linux **and** in the browser, from one
+`rusqlite` dependency and one `HistoryStore` implementation. The browser was
+the whole problem; the three native platforms worked first try.
+
+### What the core looks like now
+
+`calc_core` gained a `HistoryStore` trait (`store.rs`) and lost its
+`Vec<Entry>` as the source of truth. `Calculator` writes through the trait
+and keeps a mirror of what the store holds, because every front end
+re-renders the whole history on every keystroke and reading that back out of
+SQLite each time would be absurd. The SQLite implementation lives in its own
+crate, `//core/calc_history_sqlite`, so the evaluator keeps no third-party
+dependency at all:
+
+| | Store | Where |
+| --- | --- | --- |
+| macOS, iOS | `SqliteHistory` | `<Application Support>/<bundle id>/history.db` |
+| Android | `SqliteHistory` | `filesDir/history.db` |
+| Web | `SqliteHistory` | `calc-history.db` in OPFS, through the `sahpool` VFS |
+| Tests, previews | `MemoryHistory` | nowhere |
+
+Only the platform knows where it may write, so only the platform passes a
+path: `CalculatorUi.open(dbPath:)` over UniFFI, `openCalculator(name)` in
+wasm. Neither can fail. An unusable path degrades to an in-memory store
+*carrying the reason*, and the reason travels out through
+`HistoryStore::description()` into `ViewModel::caption`, which all four front
+ends already draw. So "history is not being saved, because X" is one string
+in Rust and zero lines of per-platform error handling.
+
+### The browser
+
+`rusqlite` 0.41 drops `libsqlite3-sys` on `wasm32-unknown-unknown` and links
+`sqlite-wasm-rs` instead, which compiles the same amalgamation (plus musl
+shims) to wasm. Four things had to be solved:
+
+1. **A C/C++ toolchain for wasm32.** Without one, rules_rust resolves a
+   `no_cc` stub and the build script dies with
+   `failed to find tool ".../cargo/private/no_cc.exe"`. The hermetic `llvm`
+   module already supports a `("none", "wasm32")` target, so this is three
+   lines in `bazel/cc_linux.MODULE.bazel` (plus macOS execs, since that
+   target has to be reachable from a Mac host too). Registering a wasm32
+   *target* toolchain does not disturb apple_support: resolution matches on
+   the target's constraints, and no macOS target toolchain is declared.
+2. **One wasm-bindgen, not two.** `sqlite-wasm-rs` needs wasm-bindgen
+   >= 0.2.128 for its host hooks (entropy, clock, sleep);
+   `rules_rust_wasm_bindgen` 0.74 pins 0.2.121. Two of them in one module is
+   a link error -- `duplicate symbol: __wbindgen_malloc` -- and mixing the
+   0.2.129 CLI with the 0.2.121 crate fails earlier, at
+   `failed to read wasm-bindgen data`. Fix: build `wasm-bindgen-cli` from
+   source as `//tools/wasm_bindgen` and register our own
+   `rust_wasm_bindgen_toolchain`, exactly as `//tools/uniffi` does for
+   UniFFI, and point the wasm crate at `@crates//:wasm-bindgen`. **This
+   reverses TL;DR finding 4.** That advice was right when the ruleset's
+   version was the only constraint; it stops being right as soon as another
+   crate needs a newer wasm-bindgen.
+3. **`crate_features` is not enough to turn a feature on.** Adding
+   `wasm-bindgen` to `sqlite-wasm-rs` through a `crate.annotation` set the
+   cfg but left `js_sys` unresolved, because resolution had already happened
+   without it. An optional dependency needs a real `crate.spec`.
+4. **OPFS needs a dedicated worker.** `createSyncAccessHandle` exists only
+   there, so the web app now runs the calculator in `src/worker.ts` and the
+   page is a renderer that posts messages to it. SQLite's calls are
+   synchronous, so that is where they belonged anyway.
+
+### A worker breaks `preventDefault()`
+
+Whether the calculator wants a key has to be decided while the key event is
+being dispatched, and the calculator is now a `postMessage` away. The
+renderer cannot ask. Reimplementing "which keys are ours" in TypeScript
+would put behaviour back in a front end, which is the one thing this repo is
+trying to avoid, so `calc_ui` publishes it instead: `keyboard_keys()`
+returns the named keys and every typeable character, derived from the same
+`is_typeable` predicate `key_input` uses so the two cannot drift. It is
+static data, fetched once with the keypad. The renderer only sends keys Rust
+has claimed.
+
+### Testing it
+
+Node has no OPFS, so the Node test only ever exercises the degraded path.
+The durable history is covered by `//bindings/wasm:calc_wasm_browser_test`,
+a `#[wasm_bindgen_test]` with `run_in_dedicated_worker` running in headless
+Chrome under `bazel test`. Two snags:
+
+- `wasm-bindgen-test-runner` pulls in `ring` through rustls, and `ring` does
+  not build under crate_universe (its build script's C and assembly never
+  reach the link: `ld: symbol(s) not found`, `_ring_core_0_17_14__*`).
+  `default_features = False` on the `wasm-bindgen-cli` spec drops rustls.
+  The CLI only needs TLS to download webdrivers, and Bazel supplies
+  chromedriver.
+- The test has to be idempotent against *storage that outlives it*. OPFS
+  survives between runs, so the browser test counts rows rather than
+  assuming an empty database. `xcrun xctest` reuses `TEST_TMPDIR`, so the
+  Swift test deletes its database file first -- it passed once and then
+  failed on the second run with ids 1, 2 and 3 already present.
+
+### Size
+
+The release web bundle goes from **128 KB to 1.43 MB**. Full-text search and
+r-trees are a third of that and a calculator needs neither, so
+`SQLITE_WASM_RS_FLAGS` drops FTS5, RTREE, session and the preupdate hook
+(1.79 MB -> 1.43 MB) via `build_script_env` on a `crate.annotation`. The
+other dozen `FULL_FEATURED` flags were measured too and came to 42 KB
+between them, which is not worth diverging from a stock SQLite for. Only
+flags adding SQL functions or internal virtual tables were touched; anything
+that changes the C API would invalidate the pregenerated bindings.
+
+### Findings
+
+1. **`rusqlite` with `bundled` needs no help in Bazel.** The
+   `libsqlite3-sys` build script compiles `sqlite3.c` with whatever cc
+   toolchain the target resolves -- Xcode's clang, the Android NDK's,
+   hermetic LLVM's -- and worked on the host, Android arm64 and the iOS
+   simulator without a single flag. The Android `.so` carries SQLite 3.54.1
+   strings; verify that way rather than trusting the build.
+2. **Apple's clang can emit wasm32 objects.** `clang --target=wasm32-unknown-unknown -c`
+   works in Xcode 21, which is what makes a wasm32 C toolchain on a Mac host
+   possible at all.
+3. **The wasm and native SQLite are different builds.** 3.53.4 from
+   `sqlite-wasm-rs` in the browser, 3.54.1 from `libsqlite3-sys` natively.
+   Same schema, same queries, two amalgamations -- so the footer prints
+   `sqlite3_libversion()` rather than a constant.
+4. **`AUTOINCREMENT` is load-bearing.** History is capped at
+   `HISTORY_LIMIT`, so rows are deleted; without `AUTOINCREMENT`, SQLite
+   reuses the ids, and a renderer keying its history rows on them would move
+   the wrong row. `//core/calc_history_sqlite` tests exactly that.
+5. **Persistence changes what "open" means.** A reopened calculator shows
+   its last result instead of `0`, and `ans` has to survive a restart --
+   which it does by parsing the stored result text back, the text
+   `format_number` wrote. There is a test for a fractional one (`1/8` then
+   `ans*8`), because that is where a lazier round trip would break.
+6. **A `HistoryStore` must be `Send`.** UniFFI objects are shared across
+   the FFI boundary and may be called from any thread.
+   `rusqlite::Connection` is `unsafe impl Send` on every target, so the
+   bound costs nothing -- but without it the `uniffi::Object` derive fails
+   with an error pointing at the derive, not at the store.

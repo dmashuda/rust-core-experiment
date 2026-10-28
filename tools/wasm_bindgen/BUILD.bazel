@@ -1,0 +1,29 @@
+load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen_toolchain")
+
+# wasm-bindgen's CLI built from source, so its version matches the
+# wasm-bindgen *crate* the wasm core links (WASM_BINDGEN_VERSION in
+# //bazel:crates.MODULE.bazel). rules_rust_wasm_bindgen ships its own pair at
+# 0.2.121; sqlite-wasm-rs needs >= 0.2.128, and two wasm-bindgen versions in
+# one wasm module are a link error (duplicate __wbindgen_malloc).
+rust_wasm_bindgen_toolchain(
+    name = "wasm_bindgen_toolchain_impl",
+    # Headless Chrome for //bindings/wasm:calc_wasm_browser_test, which is the
+    # only way to cover the OPFS history: Node has no OPFS, so the Node test
+    # only ever sees the in-memory fallback. Chrome and chromedriver are
+    # downloaded by rules_rust_wasm_bindgen's own extension.
+    browser = "@chrome",
+    browser_type = "chrome",
+    wasm_bindgen_cli = "@tool_crates//:wasm-bindgen-cli__wasm-bindgen",
+    wasm_bindgen_test = "@crates//:wasm-bindgen-test",
+    wasm_bindgen_test_runner = "@tool_crates//:wasm-bindgen-cli__wasm-bindgen-test-runner",
+    webdriver = "@chromedriver",
+    webdriver_args = ["--verbose"],
+    webdriver_json = "webdriver.json",
+)
+
+toolchain(
+    name = "wasm_bindgen_toolchain",
+    toolchain = ":wasm_bindgen_toolchain_impl",
+    toolchain_type = "@rules_rust_wasm_bindgen//:toolchain_type",
+    visibility = ["//visibility:public"],
+)

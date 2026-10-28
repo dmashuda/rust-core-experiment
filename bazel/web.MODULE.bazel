@@ -4,6 +4,17 @@
 # @rules_rust_wasm_bindgen//3rdparty:wasm_bindgen.
 bazel_dep(name = "rules_rust_wasm_bindgen", version = "0.74.0")
 
+# Our own wasm-bindgen CLI, version-matched to the crate (see the comment in
+# //tools/wasm_bindgen). Registered by the root module, so it is resolved
+# before rules_rust_wasm_bindgen's 0.2.121 default.
+register_toolchains("//tools/wasm_bindgen:wasm_bindgen_toolchain")
+
+# The browser the wasm tests run in. rules_rust_wasm_bindgen's extension
+# already downloads a pinned Chrome and chromedriver; this just asks for the
+# repos by name so our own toolchain above can point at them.
+rust_ext = use_extension("@rules_rust_wasm_bindgen//:extensions.bzl", "rust_ext")
+use_repo(rust_ext, "chrome", "chromedriver")
+
 bazel_dep(name = "bazel_lib", version = "3.7.0")
 bazel_dep(name = "aspect_rules_js", version = "3.5.2")
 bazel_dep(name = "aspect_rules_ts", version = "3.10.1")
