@@ -112,6 +112,38 @@ jobs:
       - name: Test everything
         run: bazel test --keep_going //...
 
+      # TEMPORARY. //bindings/wasm:calc_wasm_browser_test fails here and not on
+      # macOS: Chrome writes its profile, leaves a 0-byte chrome_debug.log, and
+      # exits before opening a DevTools port, which chromedriver reports as
+      # "user data directory is already in use" (it is not -- see
+      # https://issues.chromium.org/issues/433194901). The suspicion is missing
+      # GUI libraries, which full Chrome links even headless: the ruleset ships
+      # test/bazelci_unix_setup.sh to apt-install libgtk-3-0, libatk1.0-0,
+      # libgbm1, libxkbcommon-x11-0 and friends on Linux workers, and this
+      # workflow never did. This step proves or disproves that before anything
+      # is changed. Delete it once the cause is known.
+      - name: Chrome diagnostics (temporary)
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          set +e
+          . /etc/os-release && echo "runner image: $PRETTY_NAME"
+          chrome="$(find "$(bazel info output_base)/external" -maxdepth 2 -name chrome -type f | head -1)"
+          echo "chrome binary: ${chrome:-NOT FOUND}"
+          if [ -z "$chrome" ]; then exit 0; fi
+          "$chrome" --version; echo "--version exit=$?"
+          echo '--- ldd: libraries Chrome cannot find ---'
+          ldd "$chrome" | grep "not found" || echo "(none reported missing)"
+          echo '--- launching Chrome directly ---'
+          profile="$(mktemp -d)"
+          "$chrome" --headless --no-sandbox --disable-dev-shm-usage \
+            --user-data-dir="$profile" --dump-dom about:blank \
+            > /tmp/chrome-out.txt 2> /tmp/chrome-err.txt
+          echo "direct launch exit=$?"
+          echo '--- its stdout (first 3 lines) ---'; head -3 /tmp/chrome-out.txt
+          echo '--- its stderr ---'; cat /tmp/chrome-err.txt
+          echo '--- and what the profile got ---'; ls -la "$profile"
+
       - name: Clippy
         run: |
           bazel build --keep_going \
