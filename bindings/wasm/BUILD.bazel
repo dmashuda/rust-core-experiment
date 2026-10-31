@@ -31,8 +31,14 @@ rust_wasm_bindgen(
 
 # The crate's own #[wasm_bindgen_test]s, in headless Chrome. The only place
 # OPFS exists, so the only place the durable history can be tested.
+#
+# `requires-macos` keeps it out of `bazel test //...` on Linux (see .bazelrc):
+# Chrome dies during startup there when chromedriver launches it inside
+# Bazel's sandbox, and LOG.md section 16 records how far that was chased.
+# `bazel test //...` on a Mac still runs it.
 rust_wasm_bindgen_test(
     name = "calc_wasm_browser_test",
+    tags = ["requires-macos"],
     wasm = ":calc_wasm_bindgen",
 )
 

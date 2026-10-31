@@ -36,7 +36,7 @@ apps/android            renderer: Kotlin (plain Views) + android_binary; Rust sh
 
 | Command | What it does |
 | --- | --- |
-| `bazel test //...` | Rust unit tests (evaluator, view model, SQLite store), wasm-in-Node test, OPFS test in headless Chrome, web renderer test (bundle + stub DOM + real worker), tsc typecheck, Swift XCTest (bindings + UI snapshot), Kotlin JUnit via JNA, dev-server test |
+| `bazel test //...` | Rust unit tests (evaluator, view model, SQLite store), wasm-in-Node test, web renderer test (bundle + stub DOM + real worker), tsc typecheck, Swift XCTest (bindings + UI snapshot), Kotlin JUnit via JNA, dev-server test, and on a Mac the OPFS test in headless Chrome |
 | `bazel run //apps/web:serve` | Web app on http://localhost:8080 |
 | `bazel run //apps/macos:CalculatorMac` | Build and launch the macOS app |
 | `bazel build //apps/ios:CalculatorIOS` | iOS simulator `.ipa` |
@@ -60,10 +60,14 @@ CI (`.github/workflows/ci.yml`) runs all of those on Linux, which is also what
 keeps the hermeticity claims below honest. The Apple tests are not covered
 there: a second matrix leg does not fit in GitHub's 10 GB per-repository
 cache budget, so they are left to `bazel test //...` on a Mac (see the comment
-at the top of the workflow for how to re-enable them).
+at the top of the workflow for how to re-enable them). The OPFS test
+(`//bindings/wasm:calc_wasm_browser_test`) is Mac-only for a different and
+less satisfying reason: Chrome dies during startup when chromedriver launches
+it inside Bazel's sandbox on Linux. LOG.md section 16 has the evidence and the
+three theories that turned out to be wrong.
 
-Requirements: bazelisk. Bazel downloads Rust, Node, the JDK, a headless
-Chrome (for the OPFS test) and a hermetic LLVM C/C++ toolchain -- which also
+Requirements: bazelisk. Bazel downloads Rust, Node, the JDK, a Chrome (for
+the OPFS test on macOS) and a hermetic LLVM C/C++ toolchain -- which also
 supplies the clang that compiles SQLite's C to wasm32 -- so a Linux box needs
 no compiler at all.
 Bazel also downloads a pinned Android SDK and NDK (macOS and x86_64 Linux

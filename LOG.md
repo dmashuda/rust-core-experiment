@@ -1017,7 +1017,7 @@ has claimed.
 Node has no OPFS, so the Node test only ever exercises the degraded path.
 The durable history is covered by `//bindings/wasm:calc_wasm_browser_test`,
 a `#[wasm_bindgen_test]` with `run_in_dedicated_worker` running in headless
-Chrome under `bazel test`. Two snags:
+Chrome under `bazel test` -- on macOS only, see the postscript. Two snags:
 
 - `wasm-bindgen-test-runner` pulls in `ring` through rustls, and `ring` does
   not build under crate_universe (its build script's C and assembly never
@@ -1025,24 +1025,66 @@ Chrome under `bazel test`. Two snags:
   `default_features = False` on the `wasm-bindgen-cli` spec drops rustls.
   The CLI only needs TLS to download webdrivers, and Bazel supplies
   chromedriver.
-- **Do not set Chrome flags in `webdriver.json`.** Three layers add them:
-  the ruleset's wrapper appends
-  `user-data-dir=$TEST_UNDECLARED_OUTPUTS_DIR/user_data_dir`, and
-  `wasm-bindgen-test-runner` itself appends `headless`,
-  `disable-dev-shm-usage` and `no-sandbox`. A `--headless=new` added on top
-  of that passed on macOS and failed the first CI run on Linux: Chrome 136
-  opened the profile from a second process, chromedriver answered
-  `session not created: probably user data directory is already in use`, and
-  the half-started browser left a dangling `SingletonLock` symlink in the
-  test's output tree, which Bazel then refused to validate
-  (`child user_data_dir/SingletonLock is a dangling symbolic link`). Two
-  errors, one cause, and the `SingletonLock` one is the louder of the two --
-  read the chromedriver log, not the Bazel error.
+- **The browser test does not run on Linux, and is tagged `requires-macos`
+  because of it.** See the postscript below; four CI rounds went into it.
 - The test has to be idempotent against *storage that outlives it*. OPFS
   survives between runs, so the browser test counts rows rather than
   assuming an empty database. `xcrun xctest` reuses `TEST_TMPDIR`, so the
   Swift test deletes its database file first -- it passed once and then
   failed on the second run with ids 1, 2 and 3 already present.
+
+### Postscript: the browser test only runs on macOS
+
+It passed locally and failed every CI run on Linux, always with
+
+```
+session not created: probably user data directory is already in use
+ERROR: ... error while validating output tree artifact
+       .../test.outputs: child user_data_dir/SingletonLock is a
+       dangling symbolic link
+```
+
+Both messages are symptoms. Chromium's tracker says the first is simply what
+chromedriver reports when Chrome has exited
+([issue 433194901](https://issues.chromium.org/issues/433194901)), and the
+uploaded test artifact showed why that fits: Chrome had written its profile
+skeleton, left a **0-byte `chrome_debug.log`**, and never created
+`DevToolsActivePort`. The dangling `SingletonLock` is debris from that dead
+process, and it is the louder error only because Bazel refuses a dangling
+symlink inside an output tree.
+
+Three theories died on the way, which is the useful part of this entry:
+
+1. **Duplicate Chrome flags.** `webdriver.json` had added `--headless=new`,
+   `--no-sandbox` and `--disable-dev-shm-usage` on top of the `headless`,
+   `disable-dev-shm-usage` and `no-sandbox` that `wasm-bindgen-test-runner`
+   already appends, and the `user-data-dir` the ruleset's wrapper appends.
+   Plausible, and wrong: the same error is in the log from *before* those
+   flags existed. They were removed anyway -- the file is empty now -- but
+   that fixed nothing.
+2. **Missing GUI libraries.** The ruleset ships
+   `test/bazelci_unix_setup.sh` to apt-install `libgtk-3-0`, `libatk1.0-0`,
+   `libgbm1` and friends on Linux workers, and this workflow never did. Also
+   wrong: a diagnostic step proved `ldd` reports nothing missing, and the
+   downloaded Chrome dumps a DOM with exit 0 on that runner. The apt step
+   would have been cargo cult.
+3. **`chrome-headless-shell` instead of full Chrome.** The ruleset downloads
+   one, and it needs far fewer libraries. It does not work with
+   chromedriver: DevTools starts but exposes no targets, so the session POST
+   times out after 60s.
+
+What is left, unproven: Chrome is healthy on the runner, so the problem is
+the launch `rules_rust_wasm_bindgen` performs -- chromedriver, inside Bazel's
+sandbox, with a **219-character** `--user-data-dir` under `test.outputs`.
+Chrome's process singleton is a Unix socket on Linux and a lock file on
+macOS, and that path is far past the ~108-byte `sun_path` limit, which would
+explain a failure on exactly one of the two platforms. The ruleset hardcodes
+that directory, so testing the theory means patching upstream.
+
+So the test is tagged `requires-macos` and `.bazelrc` filters it out when
+Bazel runs on Linux. It still *builds* there; only the run is skipped, next
+to the Apple tests that are already Mac-only. The OPFS behaviour itself is
+verified -- by that test on a Mac, and by hand in Chrome.
 
 ### Size
 
