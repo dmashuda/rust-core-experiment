@@ -1025,6 +1025,19 @@ Chrome under `bazel test`. Two snags:
   `default_features = False` on the `wasm-bindgen-cli` spec drops rustls.
   The CLI only needs TLS to download webdrivers, and Bazel supplies
   chromedriver.
+- **Do not set Chrome flags in `webdriver.json`.** Three layers add them:
+  the ruleset's wrapper appends
+  `user-data-dir=$TEST_UNDECLARED_OUTPUTS_DIR/user_data_dir`, and
+  `wasm-bindgen-test-runner` itself appends `headless`,
+  `disable-dev-shm-usage` and `no-sandbox`. A `--headless=new` added on top
+  of that passed on macOS and failed the first CI run on Linux: Chrome 136
+  opened the profile from a second process, chromedriver answered
+  `session not created: probably user data directory is already in use`, and
+  the half-started browser left a dangling `SingletonLock` symlink in the
+  test's output tree, which Bazel then refused to validate
+  (`child user_data_dir/SingletonLock is a dangling symbolic link`). Two
+  errors, one cause, and the `SingletonLock` one is the louder of the two --
+  read the chromedriver log, not the Bazel error.
 - The test has to be idempotent against *storage that outlives it*. OPFS
   survives between runs, so the browser test counts rows rather than
   assuming an empty database. `xcrun xctest` reuses `TEST_TMPDIR`, so the

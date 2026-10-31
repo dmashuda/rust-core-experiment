@@ -5,9 +5,11 @@
 # pass. Apple targets are skipped off macOS by //tools/apple:defs.bzl.
 #
 # `bazel test //...` includes //bindings/wasm:calc_wasm_browser_test, which
-# drives headless Chrome (downloaded by Bazel, run with --no-sandbox and
-# --disable-dev-shm-usage; see //tools/wasm_bindgen:webdriver.json). It is the
-# only test that can reach OPFS, where the web app keeps its history.
+# drives headless Chrome, downloaded by Bazel. wasm-bindgen-test-runner
+# already passes --headless, --no-sandbox and --disable-dev-shm-usage, so
+# //tools/wasm_bindgen:webdriver.json adds nothing (see the comment there --
+# duplicating those flags breaks the run on Linux). It is the only test that
+# can reach OPFS, where the web app keeps its history.
 #
 # macOS is deliberately not in the matrix. Not for billing -- GitHub-hosted
 # runners are free on a public repository, macOS included -- but for the cache
