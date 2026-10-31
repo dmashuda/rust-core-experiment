@@ -12,6 +12,10 @@
 
 use std::fmt;
 
+mod store;
+
+pub use store::{HistoryStore, MemoryHistory, StoreError};
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CalcError {
     Empty,
@@ -236,20 +240,54 @@ pub struct Entry {
 
 /// A stateful calculator that remembers successful evaluations and exposes
 /// the previous answer as `ans`.
-#[derive(Debug, Default)]
+///
+/// History is written through a [`HistoryStore`], so the same calculator backs
+/// a throwaway `Vec` and a SQLite file. `history` below mirrors what the store
+/// holds: every front end re-renders the whole list on every keystroke, and
+/// reading it back out of SQLite that often would be absurd.
+#[derive(Debug)]
 pub struct Calculator {
+    store: Box<dyn HistoryStore>,
     history: Vec<Entry>,
     last: Option<f64>,
-    next_id: u64,
+    /// The last store write that failed, surfaced so a front end can say
+    /// history is not being saved rather than quietly dropping it.
+    store_error: Option<StoreError>,
+}
+
+impl Default for Calculator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Calculator {
+    /// A calculator whose history lives only as long as it does.
     pub fn new() -> Self {
-        Self::default()
+        Calculator {
+            store: Box::new(MemoryHistory::new()),
+            history: Vec::new(),
+            last: Option::None,
+            store_error: Option::None,
+        }
+    }
+
+    /// A calculator backed by `store`, picking up the history already in it.
+    ///
+    /// `ans` carries over too: the newest stored result is parsed back, which
+    /// is exactly what [`format_number`] wrote.
+    pub fn with_store(store: Box<dyn HistoryStore>) -> Result<Self, StoreError> {
+        let history = store.entries()?;
+        let last = history.last().and_then(|e| e.result.parse::<f64>().ok());
+        Ok(Calculator { store, history, last, store_error: Option::None })
     }
 
     /// Evaluates `input`, substituting `ans` with the previous result, and
     /// records it in history on success. Returns the formatted result.
+    ///
+    /// A store that cannot take the entry does not fail the evaluation -- the
+    /// answer is still correct -- but the failure is remembered, see
+    /// [`Calculator::store_error`].
     pub fn evaluate(&mut self, input: &str) -> Result<String, CalcError> {
         let expanded = match self.last {
             Some(v) => input.replace("ans", &format!("({v})")),
@@ -258,12 +296,20 @@ impl Calculator {
         let value = evaluate(&expanded)?;
         let result = format_number(value);
         self.last = Some(value);
-        self.next_id += 1;
-        self.history.push(Entry {
-            id: self.next_id,
-            expression: input.trim().to_string(),
-            result: result.clone(),
-        });
+        let expression = input.trim().to_string();
+        let id = match self.store.append(&expression, &result) {
+            Ok(id) => {
+                self.store_error = Option::None;
+                id
+            }
+            // Keep going with an id of our own. It only has to be unique
+            // among what is on screen, which the mirror is.
+            Err(e) => {
+                self.store_error = Some(e);
+                self.history.last().map_or(1, |e| e.id + 1)
+            }
+        };
+        self.history.push(Entry { id, expression, result: result.clone() });
         if self.history.len() > HISTORY_LIMIT {
             self.history.remove(0);
         }
@@ -279,9 +325,25 @@ impl Calculator {
         &self.history
     }
 
+    /// Where history is being kept, for the footer caption.
+    pub fn store_description(&self) -> String {
+        self.store.description()
+    }
+
+    /// The last failed store write, if the store is not taking entries.
+    pub fn store_error(&self) -> Option<&StoreError> {
+        self.store_error.as_ref()
+    }
+
+    /// Forgets every evaluation, in the store as well. No front end exposes
+    /// this yet -- the `C` key deliberately keeps history -- but a store that
+    /// persists makes "forget my history" a thing someone will want.
     pub fn clear(&mut self) {
         self.history.clear();
-        self.last = None;
+        self.last = Option::None;
+        if let Err(e) = self.store.clear() {
+            self.store_error = Some(e);
+        }
     }
 }
 
@@ -363,6 +425,56 @@ mod tests {
         assert_eq!(c.history().len(), HISTORY_LIMIT, "history does not grow without bound");
         assert_eq!(c.history().last().unwrap().expression, format!("{}+0", HISTORY_LIMIT + 9));
         assert_eq!(c.history().first().unwrap().expression, "10+0", "the oldest entries are dropped");
+    }
+
+    /// A store that takes nothing, for the "history cannot be saved" path.
+    #[derive(Debug)]
+    struct FailingStore;
+
+    impl HistoryStore for FailingStore {
+        fn append(&mut self, _expression: &str, _result: &str) -> Result<u64, StoreError> {
+            Err(StoreError::new("disk is full"))
+        }
+
+        fn entries(&self) -> Result<Vec<Entry>, StoreError> {
+            Ok(Vec::new())
+        }
+
+        fn clear(&mut self) -> Result<(), StoreError> {
+            Ok(())
+        }
+
+        fn description(&self) -> String {
+            "a store that refuses".to_string()
+        }
+    }
+
+    #[test]
+    fn a_store_that_refuses_writes_does_not_break_the_calculator() {
+        let mut c = Calculator::with_store(Box::new(FailingStore)).unwrap();
+        assert_eq!(c.evaluate("6*7").unwrap(), "42", "the answer is still right");
+        assert_eq!(c.store_error().map(|e| e.message.as_str()), Some("disk is full"));
+
+        // The entry is still on screen, with an id of its own, and `ans`
+        // still works. Only persistence is lost.
+        assert_eq!(c.history(), [Entry { id: 1, expression: "6*7".into(), result: "42".into() }]);
+        assert_eq!(c.evaluate("ans+1").unwrap(), "43");
+        assert_eq!(c.history().iter().map(|e| e.id).collect::<Vec<_>>(), vec![1, 2], "ids stay unique");
+    }
+
+    #[test]
+    fn a_store_with_history_restores_it_and_ans() {
+        let mut store = MemoryHistory::new();
+        store.append("6*7", "42").unwrap();
+        let mut c = Calculator::with_store(Box::new(store)).unwrap();
+        assert_eq!(c.history().len(), 1);
+        assert_eq!(c.last_result(), Some("42"));
+        assert_eq!(c.evaluate("ans/2").unwrap(), "21");
+    }
+
+    #[test]
+    fn the_default_store_is_memory() {
+        assert_eq!(Calculator::new().store_description(), "memory");
     }
 
     #[test]

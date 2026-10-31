@@ -12,6 +12,13 @@ test --test_output=errors
 # and apply with `bazel run @rules_rust//tools/rustfmt`.
 common --@rules_rust//rust/settings:rustfmt.toml=//:.rustfmt.toml
 
+# The wasm browser test (//bindings/wasm:calc_wasm_browser_test) runs a real
+# Chrome and only works on macOS today, so it is tagged `requires-macos` and
+# filtered out when Bazel is running on Linux. It still builds there; only the
+# test run is skipped. Why it cannot run on Linux is in LOG.md section 16 --
+# it is not a missing-library problem, and it is worth another look.
+test:linux --test_tag_filters=-requires-macos
+
 # Pick up per-user overrides last.
 try-import %workspace%/user.bazelrc
 

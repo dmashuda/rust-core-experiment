@@ -8,6 +8,10 @@ metadata the runtime macros embed in the compiled library.
 
 UNIFFI_VERSION = "=0.32.2"
 
+# Spike: must match the CLI built in //tools/wasm_bindgen, and be >= 0.2.128
+# because that is what sqlite-wasm-rs requires.
+WASM_BINDGEN_VERSION = "=0.2.129"
+
 # Every triple some front end compiles Rust for (plus Linux for CI).
 CRATE_TRIPLES = [
     "aarch64-apple-darwin",
@@ -29,6 +33,76 @@ crate.spec(
     repositories = ["crates"],
     version = UNIFFI_VERSION,
 )
+# Spike: SQLite. `bundled` compiles the amalgamation via libsqlite3-sys'
+# build script; on wasm32-unknown-unknown rusqlite uses sqlite-wasm-rs instead.
+crate.spec(
+    features = ["bundled"],
+    package = "rusqlite",
+    repositories = ["crates"],
+    version = "0.41.0",
+)
+
+# Full-text search and r-trees are a third of the SQLite that would otherwise
+# ship to the browser, and a calculator's history needs neither: dropping
+# these four takes the release wasm from 1.79 MB to 1.43 MB. Only flags that
+# add SQL functions or internal virtual tables are touched -- nothing that
+# changes the C API the pregenerated bindings declare. (The other dozen
+# FULL_FEATURED flags were measured too: together they were worth another
+# 42 KB, which is not worth the divergence.)
+crate.annotation(
+    build_script_env = {
+        "SQLITE_WASM_RS_FLAGS": " ".join([
+            "-USQLITE_ENABLE_FTS5",
+            "-USQLITE_ENABLE_RTREE",
+            "-USQLITE_ENABLE_SESSION",
+            "-USQLITE_ENABLE_PREUPDATE_HOOK",
+        ]),
+    },
+    crate = "sqlite-wasm-rs",
+    repositories = ["crates"],
+)
+
+# On wasm32-unknown-unknown, sqlite-wasm-rs needs host hooks (entropy, clock,
+# sleep); its wasm-bindgen feature supplies them from JS. Named here as a spec
+# (not an annotation) so resolution pulls in js-sys and wasm-bindgen.
+crate.spec(
+    default_features = False,
+    features = ["wasm-bindgen"],
+    package = "sqlite-wasm-rs",
+    repositories = ["crates"],
+    version = "0.6.2",
+)
+
+crate.spec(
+    package = "wasm-bindgen",
+    repositories = ["crates"],
+    version = WASM_BINDGEN_VERSION,
+)
+
+# The browser-side test harness (//bindings/wasm:calc_wasm_browser_test). Its
+# version has to pair with WASM_BINDGEN_VERSION, like the CLI does.
+crate.spec(
+    package = "wasm-bindgen-test",
+    repositories = ["crates"],
+    version = "0.3",
+)
+
+# An exported `async fn` compiles to a JS Promise through this crate.
+crate.spec(
+    package = "wasm-bindgen-futures",
+    repositories = ["crates"],
+    version = "0.4",
+)
+
+# The OPFS VFS, so the browser keeps its history across reloads. Separate
+# from sqlite-wasm-rs, and only the web binding depends on it.
+crate.spec(
+    default_features = False,
+    features = ["sahpool"],
+    package = "sqlite-wasm-vfs",
+    repositories = ["crates"],
+    version = "0.3.0",
+)
 crate.from_specs(
     name = "crates",
     supported_platform_triples = CRATE_TRIPLES,
@@ -43,6 +117,24 @@ crate.spec(
     package = "uniffi",
     repositories = ["tool_crates"],
     version = UNIFFI_VERSION,
+)
+# default_features = False drops rustls, whose `ring` dependency does not
+# build under crate_universe (its build script's C and assembly never make it
+# to the link). The CLI only needs TLS to download webdrivers, and Bazel
+# supplies chromedriver, so nothing here misses it.
+crate.spec(
+    default_features = False,
+    package = "wasm-bindgen-cli",
+    repositories = ["tool_crates"],
+    version = WASM_BINDGEN_VERSION,
+)
+crate.annotation(
+    crate = "wasm-bindgen-cli",
+    gen_binaries = [
+        "wasm-bindgen",
+        "wasm-bindgen-test-runner",
+    ],
+    repositories = ["tool_crates"],
 )
 crate.from_specs(
     name = "tool_crates",

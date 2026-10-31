@@ -4,20 +4,31 @@
 
 A Bazel 9 monorepo where one Rust core powers a web app, a macOS app, an iOS
 app and an Android app. Everything is built and tested
-by Bazel. All behaviour, including UI state, lives in Rust; each app only
-draws the Rust view model. The calculator is just the vehicle. **See [LOG.md](LOG.md) for the
-research log and every gotcha hit along the way.**
+by Bazel. All behaviour, including UI state and persistence, lives in Rust;
+each app only draws the Rust view model. History is kept in SQLite on every
+platform -- a file in the app sandbox natively, OPFS in the browser. The
+calculator is just the vehicle. **See [LOG.md](LOG.md) for the research log
+and every gotcha hit along the way.**
 
 ```
-core/calc_core          Rust: expression evaluator + stateful Calculator (pure, no FFI)
+core/calc_core          Rust: expression evaluator + stateful Calculator (pure, no deps)
+                        history goes through a HistoryStore trait
 core/calc_ui            Rust: UI view model (keypad, input, keyboard, errors, history)
                         keypad() is static and fetched once; the ViewModel is
                         only what changes between keystrokes
-bindings/wasm           wasm-bindgen wrapper of calc_ui → JS/TS (web)
+core/calc_history_sqlite  Rust: the SQLite HistoryStore (rusqlite), the only
+                        crate that knows SQLite exists
+bindings/wasm           wasm-bindgen wrapper of calc_ui → JS/TS (web); opens the
+                        OPFS VFS so the browser's history is durable
 bindings/uniffi         UniFFI wrapper of calc_ui      → Swift (Apple) + Kotlin (Android/JVM)
 tools/uniffi            uniffi-bindgen(-swift) built from source as rust_binary
+tools/wasm_bindgen      wasm-bindgen CLI built from source, version-matched to
+                        the crate (the ruleset's pinned pair is too old for
+                        SQLite-in-wasm)
 bazel/*.MODULE.bazel    the toolchains, one file per stack, include()d by MODULE.bazel
 apps/web                renderer: TypeScript + esbuild, served by a tiny Node server
+                        src/worker.ts runs the calculator: the OPFS VFS needs
+                        a dedicated worker, so the page only draws
 apps/apple/CalculatorUI renderer: SwiftUI, shared by macOS and iOS
 apps/macos, apps/ios    macos_application / ios_application
 apps/android            renderer: Kotlin (plain Views) + android_binary; Rust ships as libcalc_ffi.so
@@ -25,12 +36,12 @@ apps/android            renderer: Kotlin (plain Views) + android_binary; Rust sh
 
 | Command | What it does |
 | --- | --- |
-| `bazel test //...` | Rust unit tests, wasm-in-Node test, web renderer test (bundle + stub DOM), tsc typecheck, Swift XCTest (bindings + UI snapshot), Kotlin JUnit via JNA, dev-server test |
+| `bazel test //...` | Rust unit tests (evaluator, view model, SQLite store), wasm-in-Node test, web renderer test (bundle + stub DOM + real worker), tsc typecheck, Swift XCTest (bindings + UI snapshot), Kotlin JUnit via JNA, dev-server test, and on a Mac the OPFS test in headless Chrome |
 | `bazel run //apps/web:serve` | Web app on http://localhost:8080 |
 | `bazel run //apps/macos:CalculatorMac` | Build and launch the macOS app |
 | `bazel build //apps/ios:CalculatorIOS` | iOS simulator `.ipa` |
 | `bazel build //apps/android:calc_android` | Android APK (arm64-v8a); `adb install -r bazel-bin/apps/android/calc_android.apk`. Build that target on its own: `bazel build //...` repoints `bazel-bin` at a configuration the APK is not in |
-| `bazel build --config=release //apps/web:site` | Optimized web bundle (~125 KB wasm; only `opt` minifies the JS) |
+| `bazel build --config=release //apps/web:site` | Optimized web bundle (~1.43 MB wasm, most of it SQLite; only `opt` minifies the JS) |
 
 ### Checks
 
@@ -49,10 +60,16 @@ CI (`.github/workflows/ci.yml`) runs all of those on Linux, which is also what
 keeps the hermeticity claims below honest. The Apple tests are not covered
 there: a second matrix leg does not fit in GitHub's 10 GB per-repository
 cache budget, so they are left to `bazel test //...` on a Mac (see the comment
-at the top of the workflow for how to re-enable them).
+at the top of the workflow for how to re-enable them). The OPFS test
+(`//bindings/wasm:calc_wasm_browser_test`) is Mac-only for a different and
+less satisfying reason: Chrome dies during startup when chromedriver launches
+it inside Bazel's sandbox on Linux. LOG.md section 16 has the evidence and the
+three theories that turned out to be wrong.
 
-Requirements: bazelisk. Bazel downloads Rust, Node, the JDK and (on Linux)
-a hermetic LLVM C/C++ toolchain, so a Linux box needs no compiler at all.
+Requirements: bazelisk. Bazel downloads Rust, Node, the JDK, a Chrome (for
+the OPFS test on macOS) and a hermetic LLVM C/C++ toolchain -- which also
+supplies the clang that compiles SQLite's C to wasm32 -- so a Linux box needs
+no compiler at all.
 Bazel also downloads a pinned Android SDK and NDK (macOS and x86_64 Linux
 hosts), so no Android Studio is needed. Apple targets need macOS with Xcode
 and are skipped elsewhere. See LOG.md sections 13–15.

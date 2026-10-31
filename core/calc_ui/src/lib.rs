@@ -141,6 +141,35 @@ fn is_typeable(c: char) -> bool {
     c.is_ascii_digit() || c.is_ascii_lowercase() || ".+-*/%^() ".contains(c)
 }
 
+/// The hardware keys the calculator acts on, as static data.
+///
+/// A front end that cannot call [`CalculatorUi::key_input`] synchronously has
+/// to know, at the moment of the key event, whether the calculator wants the
+/// key -- the web renderer draws in the page and runs the calculator in a
+/// worker, and `preventDefault()` cannot wait for a round trip. So the answer
+/// is published here instead of being reimplemented per platform, and like
+/// [`keypad`] it is fetched once rather than per keystroke.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyboardKeys {
+    /// `KeyboardEvent.key` names that are acted on: Enter, Backspace, Escape.
+    pub named: Vec<String>,
+    /// Every single character that can be typed into the expression.
+    pub typeable: String,
+}
+
+/// The keys [`CalculatorUi::key_input`] accepts. See [`KeyboardKeys`].
+pub fn keyboard_keys() -> KeyboardKeys {
+    KeyboardKeys {
+        named: NAMED_KEYS.iter().map(|k| k.to_string()).collect(),
+        // Derived from `is_typeable` rather than written out again, so the
+        // list cannot drift from what `key_input` actually accepts.
+        typeable: (' '..='~').filter(|c| is_typeable(*c)).collect(),
+    }
+}
+
+/// Keys handled by name instead of being inserted as text.
+const NAMED_KEYS: &[&str] = &["Enter", "=", "Backspace", "Escape"];
+
 /// The calculator screen's state machine.
 pub struct CalculatorUi {
     calculator: Calculator,
@@ -151,6 +180,9 @@ pub struct CalculatorUi {
     /// expression can put it back instead of leaving stale error text on
     /// screen styled as a normal result.
     display_before_error: Option<String>,
+    /// Cached footer text. It only changes when the history store starts or
+    /// stops accepting writes, so it is not rebuilt on every keystroke.
+    caption: String,
 }
 
 impl Default for CalculatorUi {
@@ -160,14 +192,38 @@ impl Default for CalculatorUi {
 }
 
 impl CalculatorUi {
+    /// A screen whose history lives only as long as it does.
     pub fn new() -> Self {
-        CalculatorUi {
-            calculator: Calculator::new(),
+        Self::with_calculator(Calculator::new())
+    }
+
+    /// A screen over a calculator built elsewhere, which is how a front end
+    /// supplies a persistent history store: it knows where files may go, and
+    /// this crate does not.
+    pub fn with_calculator(calculator: Calculator) -> Self {
+        let mut ui = CalculatorUi {
+            calculator,
             expression: String::new(),
             display: "0".to_string(),
             is_error: false,
             display_before_error: None,
+            caption: String::new(),
+        };
+        // A reopened store may already hold the previous answer; show it
+        // rather than a bare 0.
+        if let Some(result) = ui.calculator.last_result() {
+            ui.display = result.to_string();
         }
+        ui.refresh_caption();
+        ui
+    }
+
+    /// Rebuilds the footer: where history is going, or why it is not.
+    fn refresh_caption(&mut self) {
+        self.caption = match self.calculator.store_error() {
+            Some(e) => format!("history not saved: {e}"),
+            None => format!("Evaluated by Rust, history in {}", self.calculator.store_description()),
+        };
     }
 
     /// The current state, for the initial render.
@@ -183,7 +239,7 @@ impl CalculatorUi {
                 .rev()
                 .map(|e| HistoryLine { id: e.id, expression: e.expression.clone(), result: e.result.clone() })
                 .collect(),
-            caption: "Evaluated by Rust".to_string(),
+            caption: self.caption.clone(),
         }
     }
 
@@ -261,6 +317,7 @@ impl CalculatorUi {
                     self.is_error = false;
                     self.display_before_error = None;
                     self.expression.clear();
+                    self.refresh_caption();
                 }
                 Err(e) => {
                     if !self.is_error {
@@ -277,6 +334,7 @@ impl CalculatorUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use calc_core::{Calculator, HistoryStore};
 
     fn press_all(ui: &mut CalculatorUi, ids: &[&str]) -> ViewModel {
         let mut vm = ui.view();
@@ -434,6 +492,77 @@ mod tests {
         let mut ui = CalculatorUi::new();
         press_all(&mut ui, &["6", "*", "7", "evaluate"]);
         assert_eq!(press_all(&mut ui, &["5"]).expression, "5");
+    }
+
+    /// A store that takes nothing, to drive the caption's failure text.
+    #[derive(Debug)]
+    struct FailingStore;
+
+    impl calc_core::HistoryStore for FailingStore {
+        fn append(&mut self, _expression: &str, _result: &str) -> Result<u64, calc_core::StoreError> {
+            Err(calc_core::StoreError::new("disk is full"))
+        }
+
+        fn entries(&self) -> Result<Vec<calc_core::Entry>, calc_core::StoreError> {
+            Ok(Vec::new())
+        }
+
+        fn clear(&mut self) -> Result<(), calc_core::StoreError> {
+            Ok(())
+        }
+
+        fn description(&self) -> String {
+            "a store that refuses".to_string()
+        }
+    }
+
+    #[test]
+    fn the_published_keyboard_keys_are_the_ones_key_input_accepts() {
+        let keys = keyboard_keys();
+        for name in &keys.named {
+            assert!(CalculatorUi::new().key_input(name).is_some(), "{name} is published but ignored");
+        }
+        for c in keys.typeable.chars() {
+            assert!(
+                CalculatorUi::new().key_input(&c.to_string()).is_some(),
+                "{c:?} is published but ignored"
+            );
+        }
+        // And nothing printable is accepted without being published.
+        for c in ' '..='~' {
+            let accepted = CalculatorUi::new().key_input(&c.to_string()).is_some();
+            let published = keys.typeable.contains(c) || keys.named.contains(&c.to_string());
+            assert_eq!(accepted, published, "{c:?}: accepted {accepted}, published {published}");
+        }
+        assert!(keys.typeable.contains('a'), "letters are typeable so `ans` can be typed");
+        assert!(!keys.typeable.contains('A'));
+    }
+
+    #[test]
+    fn the_caption_names_where_history_is_kept() {
+        assert_eq!(CalculatorUi::new().view().caption, "Evaluated by Rust, history in memory");
+    }
+
+    #[test]
+    fn the_caption_reports_a_store_that_is_not_saving() {
+        let mut ui = CalculatorUi::with_calculator(Calculator::with_store(Box::new(FailingStore)).unwrap());
+        assert_eq!(ui.view().caption, "Evaluated by Rust, history in a store that refuses");
+
+        let vm = press_all(&mut ui, &["6", "*", "7", "evaluate"]);
+        assert_eq!(vm.display, "42");
+        assert_eq!(vm.caption, "history not saved: disk is full");
+        assert_eq!(vm.history.len(), 1, "the line is still shown, just not stored");
+    }
+
+    #[test]
+    fn a_screen_over_a_restored_calculator_shows_the_last_result() {
+        let mut store = calc_core::MemoryHistory::new();
+        store.append("6*7", "42").unwrap();
+        let ui = CalculatorUi::with_calculator(Calculator::with_store(Box::new(store)).unwrap());
+        let vm = ui.view();
+        assert_eq!(vm.display, "42", "not a bare 0: the previous answer is still the display");
+        assert_eq!(vm.expression, "");
+        assert_eq!(vm.history.len(), 1);
     }
 
     #[test]

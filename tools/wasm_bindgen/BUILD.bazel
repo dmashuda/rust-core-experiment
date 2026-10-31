@@ -1,0 +1,39 @@
+load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen_toolchain")
+
+# wasm-bindgen's CLI built from source, so its version matches the
+# wasm-bindgen *crate* the wasm core links (WASM_BINDGEN_VERSION in
+# //bazel:crates.MODULE.bazel). rules_rust_wasm_bindgen ships its own pair at
+# 0.2.121; sqlite-wasm-rs needs >= 0.2.128, and two wasm-bindgen versions in
+# one wasm module are a link error (duplicate __wbindgen_malloc).
+rust_wasm_bindgen_toolchain(
+    name = "wasm_bindgen_toolchain_impl",
+    # Headless Chrome for //bindings/wasm:calc_wasm_browser_test, which is the
+    # only way to cover the OPFS history: Node has no OPFS, so the Node test
+    # only ever sees the in-memory fallback. Chrome and chromedriver are
+    # downloaded by rules_rust_wasm_bindgen's own extension.
+    browser = "@chrome",
+    browser_type = "chrome",
+    wasm_bindgen_cli = "@tool_crates//:wasm-bindgen-cli__wasm-bindgen",
+    wasm_bindgen_test = "@crates//:wasm-bindgen-test",
+    wasm_bindgen_test_runner = "@tool_crates//:wasm-bindgen-cli__wasm-bindgen-test-runner",
+    webdriver = "@chromedriver",
+    webdriver_args = ["--verbose"],
+    # Deliberately empty, and it has to stay that way. Chrome's flags are
+    # already set twice over: the ruleset's wrapper appends
+    # `user-data-dir=$TEST_UNDECLARED_OUTPUTS_DIR/user_data_dir`, and
+    # wasm-bindgen-test-runner itself appends `headless`,
+    # `disable-dev-shm-usage` and `no-sandbox`. Adding `--headless=new` here
+    # as well made Chrome 136 open that profile from a second process, so
+    # chromedriver refused the session ("user data directory is already in
+    # use") and the half-started browser left a dangling SingletonLock
+    # symlink behind, which Bazel rejects when it validates the test's
+    # output tree. macOS tolerated it; Linux did not.
+    webdriver_json = "webdriver.json",
+)
+
+toolchain(
+    name = "wasm_bindgen_toolchain",
+    toolchain = ":wasm_bindgen_toolchain_impl",
+    toolchain_type = "@rules_rust_wasm_bindgen//:toolchain_type",
+    visibility = ["//visibility:public"],
+)

@@ -4,6 +4,14 @@
 # downloaded or built by Bazel, so a runner with no compiler installed should
 # pass. Apple targets are skipped off macOS by //tools/apple:defs.bzl.
 #
+# One test does not run here: //bindings/wasm:calc_wasm_browser_test, which
+# drives a real Chrome and is the only test that can reach OPFS, where the web
+# app keeps its history. Chrome dies during startup when chromedriver launches
+# it inside Bazel's sandbox on Linux -- not for want of libraries, which is as
+# far as it was chased (LOG.md section 16). It is tagged `requires-macos` and
+# filtered out by .bazelrc, so it is covered by `bazel test //...` on a Mac,
+# alongside the Apple tests.
+#
 # macOS is deliberately not in the matrix. Not for billing -- GitHub-hosted
 # runners are free on a public repository, macOS included -- but for the cache
 # budget: GitHub allows 10 GB of caches per repository, and with both legs
