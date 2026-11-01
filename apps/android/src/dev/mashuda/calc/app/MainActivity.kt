@@ -20,6 +20,7 @@ import dev.mashuda.calc.CalculatorUi
 import dev.mashuda.calc.KeyStyle
 import dev.mashuda.calc.ViewModel
 import dev.mashuda.calc.keypad
+import java.io.File
 
 /**
  * Renderer only: draws the Rust ViewModel with plain Android Views and
@@ -44,7 +45,12 @@ class MainActivity : Activity() {
         // A rotation or a light/dark switch recreates the Activity. Take the
         // Rust calculator from the outgoing instance so the expression,
         // display and history survive instead of silently resetting.
-        ui = lastNonConfigurationInstance as? CalculatorUi ?: CalculatorUi()
+        // History is a SQLite file in the app's private storage, so it is
+        // still there after the process is killed. Rust falls back to an
+        // in-memory history (and says so in the footer) if it cannot be
+        // opened, so there is nothing to handle here.
+        ui = lastNonConfigurationInstance as? CalculatorUi
+            ?: CalculatorUi.open(File(filesDir, "history.db").absolutePath)
         setContentView(buildLayout())
         // Dark status-bar icons on the light background (light mode only).
         if (!dark) {

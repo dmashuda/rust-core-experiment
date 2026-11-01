@@ -100,9 +100,22 @@ pub struct CalculatorUi {
 
 #[uniffi::export]
 impl CalculatorUi {
+    /// A calculator whose history is not kept past this object.
     #[uniffi::constructor]
     pub fn new() -> Self {
         CalculatorUi { inner: Mutex::new(calc_ui::CalculatorUi::new()) }
+    }
+
+    /// A calculator whose history is the SQLite database at `db_path`,
+    /// created if it is not there yet. Only the platform knows where it may
+    /// write (an app sandbox), so only the platform passes the path.
+    ///
+    /// This cannot fail: an unusable path leaves the calculator working on an
+    /// in-memory history, and `view().caption` says so.
+    #[uniffi::constructor]
+    pub fn open(db_path: String) -> Self {
+        let calculator = calc_history_sqlite::open_calculator(&db_path);
+        CalculatorUi { inner: Mutex::new(calc_ui::CalculatorUi::with_calculator(calculator)) }
     }
 
     /// The current state, for the initial render.

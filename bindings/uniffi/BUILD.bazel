@@ -11,6 +11,7 @@ load("//tools/apple:defs.bzl", "APPLE_TARGET_COMPATIBLE_WITH")
 # linking, and as a cdylib for the JVM and Android -- so the two targets
 # share one dep list rather than drifting apart.
 CALC_FFI_DEPS = [
+    "//core/calc_history_sqlite",
     "//core/calc_ui",
     "@crates//:uniffi",
 ]

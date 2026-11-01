@@ -57,4 +57,19 @@ assert.equal(ui.keyInput("Tab"), undefined);
 ui.keyInput("Escape");
 ui.keyInput("9");
 assert.equal(ui.keyInput("Enter").display, "9");
+// History is SQLite, compiled to wasm: the ids below are the ones SQLite
+// assigned, and the footer says which SQLite and where it put the bytes.
+const sqlite = new CalculatorUi();
+assert.match(sqlite.view().caption, /^Evaluated by Rust, history in SQLite 3\./, sqlite.view().caption);
+assert.match(sqlite.view().caption, /\(memory\)$/, sqlite.view().caption);
+let sv = sqlite.view();
+for (const id of ["6", "*", "7", "evaluate"]) sv = sqlite.press(id);
+assert.equal(sv.display, "42");
+assert.deepEqual(
+  sv.history.map((h) => [h.id, h.expression, h.result]),
+  [[1n, "6*7", "42"]],
+  "the row came back out of SQLite, with the id SQLite assigned",
+);
+assert.equal(sqlite.press("+").expression, "ans+");
+
 console.log("wasm bindings OK");

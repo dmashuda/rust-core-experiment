@@ -42,6 +42,46 @@ final class CalcFFITests: XCTestCase {
         XCTAssertEqual(rows, keypad())
     }
 
+    /// A database path of this test's own, inside the sandbox Bazel gives it.
+    ///
+    /// Deleted first: `xcrun xctest` reuses TEST_TMPDIR between runs, so a
+    /// leftover database from the last run would already hold history.
+    private func dbPath(_ name: String) -> String {
+        let dir = ProcessInfo.processInfo.environment["TEST_TMPDIR"] ?? NSTemporaryDirectory()
+        let path = "\(dir)/\(name).db"
+        for file in [path, path + "-journal"] {
+            try? FileManager.default.removeItem(atPath: file)
+        }
+        return path
+    }
+
+    func testHistoryInSqliteSurvivesANewCalculator() {
+        let path = dbPath("swift-history")
+        let first = CalculatorUi.open(dbPath: path)
+        XCTAssertTrue(
+            first.view().caption.hasPrefix("Evaluated by Rust, history in SQLite 3."),
+            first.view().caption
+        )
+        for id in ["6", "*", "7", "evaluate"] { _ = first.press(id: id) }
+
+        // A second calculator over the same file: the app being reopened.
+        let second = CalculatorUi.open(dbPath: path)
+        let vm = second.view()
+        XCTAssertEqual(vm.history, [HistoryLine(id: 1, expression: "6*7", result: "42")])
+        XCTAssertEqual(vm.display, "42", "the previous answer is the display, not 0")
+        _ = second.press(id: "+")
+        _ = second.press(id: "1")
+        XCTAssertEqual(second.press(id: "evaluate").display, "43", "`ans` survived too")
+    }
+
+    func testAnUnusablePathStillGivesAWorkingCalculator() {
+        let ui = CalculatorUi.open(dbPath: dbPath("no/such/dir/history"))
+        for id in ["6", "*", "7", "evaluate"] { _ = ui.press(id: id) }
+        let vm = ui.view()
+        XCTAssertEqual(vm.display, "42")
+        XCTAssertTrue(vm.caption.contains("memory ("), vm.caption)
+    }
+
     func testKeyboardInput() {
         let ui = CalculatorUi()
         XCTAssertNotNil(ui.keyInput(key: "9"))

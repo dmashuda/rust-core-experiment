@@ -1,4 +1,5 @@
 import CalcFFI
+import Foundation
 import Observation
 
 /// Holds the Rust `CalculatorUi` and its latest `ViewModel` for SwiftUI.
@@ -12,10 +13,32 @@ public final class CalculatorModel {
     /// than arriving in every `ViewModel`.
     public let keypad: [KeyRow] = CalcFFI.keypad()
 
-    private let ui = CalculatorUi()
+    private let ui: CalculatorUi
 
-    public init() {
+    /// `databasePath` nil keeps history in memory, which is what tests and
+    /// previews want. The apps use ``persistent()``.
+    public init(databasePath: String? = nil) {
+        ui = databasePath.map { CalculatorUi.open(dbPath: $0) } ?? CalculatorUi()
         view = ui.view()
+    }
+
+    /// A model whose history is a SQLite file in the app's own Application
+    /// Support directory, so it is still there next launch.
+    ///
+    /// Nothing here handles failure: if the directory cannot be made, Rust
+    /// keeps history in memory and `view.caption` says so.
+    public static func persistent() -> CalculatorModel {
+        CalculatorModel(databasePath: historyDatabasePath())
+    }
+
+    /// `<Application Support>/<bundle id>/history.db`, directory created.
+    private static func historyDatabasePath() -> String? {
+        let manager = FileManager.default
+        guard let base = manager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        else { return nil }
+        let directory = base.appendingPathComponent(Bundle.main.bundleIdentifier ?? "RustCalculator")
+        try? manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("history.db").path
     }
 
     public func press(_ id: String) {

@@ -3,7 +3,15 @@
 //! Structs are exported as JS classes with getters (`getter_with_clone`).
 //! wasm-bindgen frees them through a FinalizationRegistry once JS drops
 //! them, so the renderer never has to call `.free()`.
+//!
+//! History is SQLite here too -- the same crate and schema the native apps
+//! use, compiled to wasm -- but held in SQLite's own memory, so it lasts as
+//! long as the page. Durable history in the browser means OPFS, which needs
+//! a VFS installed from a dedicated worker; that was built and then backed
+//! out (LOG.md section 16).
 
+use calc_core::{Calculator, MemoryHistory};
+use calc_history_sqlite::SqliteHistory;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -100,9 +108,19 @@ pub struct CalculatorUi {
 
 #[wasm_bindgen]
 impl CalculatorUi {
+    /// A calculator whose history is a SQLite database in memory.
+    ///
+    /// Cannot fail: if SQLite will not open even that, history falls back to
+    /// a plain `Vec` carrying the reason, and `view().caption` says so.
     #[wasm_bindgen(constructor)]
     pub fn new() -> CalculatorUi {
-        CalculatorUi { inner: calc_ui::CalculatorUi::new() }
+        let calculator = SqliteHistory::in_memory()
+            .and_then(|store| Calculator::with_store(Box::new(store)))
+            .unwrap_or_else(|e| {
+                Calculator::with_store(Box::new(MemoryHistory::fallback(e.message)))
+                    .expect("the memory store always reads back")
+            });
+        CalculatorUi { inner: calc_ui::CalculatorUi::with_calculator(calculator) }
     }
 
     /// The current state, for the initial render.

@@ -1,0 +1,20 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+# The SQLite HistoryStore. Separate from //core/calc_core so the evaluator
+# keeps no third-party dependency, and so a front end that cannot store
+# anything can leave this crate out of its binary entirely.
+rust_library(
+    name = "calc_history_sqlite",
+    srcs = glob(["src/**/*.rs"]),
+    visibility = ["//visibility:public"],
+    deps = [
+        "//core/calc_core",
+        "@crates//:rusqlite",
+    ],
+)
+
+rust_test(
+    name = "calc_history_sqlite_test",
+    size = "small",
+    crate = ":calc_history_sqlite",
+)
