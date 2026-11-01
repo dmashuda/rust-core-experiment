@@ -59,10 +59,11 @@ tools need Java 17 flags.
 
 **Update: history is in SQLite** (section 16). One `rusqlite` dependency
 and one `HistoryStore` implementation serve all four platforms -- a file in
-the app sandbox on Apple and Android, OPFS in the browser. Getting there
-needed a wasm32 C/C++ toolchain, our own wasm-bindgen CLI (which **reverses
-finding 4 above**), and the web app split into a renderer and a worker,
-because the OPFS VFS only works in one.
+the app sandbox on Apple and Android, SQLite's in-memory VFS in the browser.
+Getting there needed a wasm32 C/C++ toolchain and our own wasm-bindgen CLI,
+which **reverses finding 4 above**. Durable browser history through OPFS was
+built and then backed out: it needs a dedicated worker, and its test could
+not be made to run on Linux CI.
 
 Not done: running on an iOS simulator (no runtime installed), and a signed
 iOS device build (needs a provisioning profile).
@@ -940,6 +941,11 @@ yes, on macOS, iOS, Android, Linux **and** in the browser, from one
 `rusqlite` dependency and one `HistoryStore` implementation. The browser was
 the whole problem; the three native platforms worked first try.
 
+Durable browser history (OPFS) was built, worked, and was then **backed
+out** in favour of SQLite's in-memory VFS -- see "Why OPFS came out" below.
+The browser therefore runs the same crate, schema and queries as the native
+apps, and loses its history when the page closes.
+
 ### What the core looks like now
 
 `calc_core` gained a `HistoryStore` trait (`store.rs`) and lost its
@@ -954,12 +960,12 @@ dependency at all:
 | --- | --- | --- |
 | macOS, iOS | `SqliteHistory` | `<Application Support>/<bundle id>/history.db` |
 | Android | `SqliteHistory` | `filesDir/history.db` |
-| Web | `SqliteHistory` | `calc-history.db` in OPFS, through the `sahpool` VFS |
+| Web | `SqliteHistory` | SQLite's own memory, for the life of the page |
 | Tests, previews | `MemoryHistory` | nowhere |
 
 Only the platform knows where it may write, so only the platform passes a
-path: `CalculatorUi.open(dbPath:)` over UniFFI, `openCalculator(name)` in
-wasm. Neither can fail. An unusable path degrades to an in-memory store
+path: `CalculatorUi.open(dbPath:)` over UniFFI. The wasm constructor takes
+none, because there is nowhere to put a file. Neither can fail. An unusable path degrades to an in-memory store
 *carrying the reason*, and the reason travels out through
 `HistoryStore::description()` into `ViewModel::caption`, which all four front
 ends already draw. So "history is not being saved, because X" is one string
@@ -995,47 +1001,55 @@ shims) to wasm. Four things had to be solved:
    `wasm-bindgen` to `sqlite-wasm-rs` through a `crate.annotation` set the
    cfg but left `js_sys` unresolved, because resolution had already happened
    without it. An optional dependency needs a real `crate.spec`.
-4. **OPFS needs a dedicated worker.** `createSyncAccessHandle` exists only
-   there, so the web app now runs the calculator in `src/worker.ts` and the
-   page is a renderer that posts messages to it. SQLite's calls are
-   synchronous, so that is where they belonged anyway.
+4. **OPFS needs a dedicated worker,** because `createSyncAccessHandle`
+   exists only there. This was built -- the calculator ran in a worker and
+   the page posted messages to it -- and then removed with OPFS.
 
-### A worker breaks `preventDefault()`
+### A worker breaks `preventDefault()` (while it lasted)
 
-Whether the calculator wants a key has to be decided while the key event is
-being dispatched, and the calculator is now a `postMessage` away. The
-renderer cannot ask. Reimplementing "which keys are ours" in TypeScript
-would put behaviour back in a front end, which is the one thing this repo is
-trying to avoid, so `calc_ui` publishes it instead: `keyboard_keys()`
-returns the named keys and every typeable character, derived from the same
-`is_typeable` predicate `key_input` uses so the two cannot drift. It is
-static data, fetched once with the keypad. The renderer only sends keys Rust
-has claimed.
+Worth writing down, because it is the kind of thing a worker costs. Whether
+the calculator wants a key has to be decided while the key event is being
+dispatched, and with the calculator behind a `postMessage` the renderer could
+not ask. Reimplementing "which keys are ours" in TypeScript would have put
+behaviour back in a front end, which is the one thing this repo is trying to
+avoid, so `calc_ui` published it instead: a `keyboard_keys()` returning the
+named keys and every typeable character, derived from the same `is_typeable`
+predicate `key_input` uses so the two could not drift. Static data, fetched
+once with the keypad.
+
+All of it came out with the worker. On the main thread `key_input` is a
+direct call again, which is what the renderer already did.
 
 ### Testing it
 
-Node has no OPFS, so the Node test only ever exercises the degraded path.
-The durable history is covered by `//bindings/wasm:calc_wasm_browser_test`,
-a `#[wasm_bindgen_test]` with `run_in_dedicated_worker` running in headless
-Chrome under `bazel test` -- on macOS only, see the postscript. Two snags:
+The Node test (`//bindings/wasm:calc_wasm_test`) loads the real wasm-bindgen
+output and drives SQLite-in-wasm: rows go in, come back with the ids SQLite
+assigned, and the footer reports `SQLite 3.53.4 (memory)`. With OPFS gone
+that is the whole of the web store, so no browser is needed to test it.
+
+While OPFS was in, it could only be covered in a browser, by a
+`#[wasm_bindgen_test]` with `run_in_dedicated_worker` in headless Chrome.
+Two snags from that, kept because they will bite again:
 
 - `wasm-bindgen-test-runner` pulls in `ring` through rustls, and `ring` does
   not build under crate_universe (its build script's C and assembly never
   reach the link: `ld: symbol(s) not found`, `_ring_core_0_17_14__*`).
-  `default_features = False` on the `wasm-bindgen-cli` spec drops rustls.
-  The CLI only needs TLS to download webdrivers, and Bazel supplies
-  chromedriver.
-- **The browser test does not run on Linux, and is tagged `requires-macos`
-  because of it.** See the postscript below; four CI rounds went into it.
-- The test has to be idempotent against *storage that outlives it*. OPFS
-  survives between runs, so the browser test counts rows rather than
-  assuming an empty database. `xcrun xctest` reuses `TEST_TMPDIR`, so the
-  Swift test deletes its database file first -- it passed once and then
-  failed on the second run with ids 1, 2 and 3 already present.
+  `default_features = False` on the `wasm-bindgen-cli` spec drops rustls --
+  still set, because the `wasm-bindgen` binary shares those dependencies.
+- Tests have to be idempotent against *storage that outlives them*. The
+  browser test counted rows rather than assuming an empty database, and the
+  Swift test deletes its database file first: it passed once and then failed
+  on the second run with ids 1, 2 and 3 already present, because
+  `xcrun xctest` reuses `TEST_TMPDIR`.
 
-### Postscript: the browser test only runs on macOS
+### Why OPFS came out
 
-It passed locally and failed every CI run on Linux, always with
+It worked. The footer read `SQLite 3.53.4 (OPFS)`, `6*7` survived a reload,
+and a `#[wasm_bindgen_test]` in headless Chrome proved it on macOS. What it
+could not do was run in CI, and the reason was never OPFS itself.
+
+On Linux, Chrome died during startup whenever chromedriver launched it inside
+Bazel's sandbox, always reported as
 
 ```
 session not created: probably user data directory is already in use
@@ -1047,11 +1061,11 @@ ERROR: ... error while validating output tree artifact
 Both messages are symptoms. Chromium's tracker says the first is simply what
 chromedriver reports when Chrome has exited
 ([issue 433194901](https://issues.chromium.org/issues/433194901)), and the
-uploaded test artifact showed why that fits: Chrome had written its profile
-skeleton, left a **0-byte `chrome_debug.log`**, and never created
-`DevToolsActivePort`. The dangling `SingletonLock` is debris from that dead
-process, and it is the louder error only because Bazel refuses a dangling
-symlink inside an output tree.
+uploaded test artifact agreed: Chrome had written its profile skeleton, left
+a **0-byte `chrome_debug.log`**, and never created `DevToolsActivePort`. The
+dangling `SingletonLock` is debris from that dead process, and it is the
+louder error only because Bazel refuses a dangling symlink inside an output
+tree.
 
 Three theories died on the way, which is the useful part of this entry:
 
@@ -1060,35 +1074,37 @@ Three theories died on the way, which is the useful part of this entry:
    `disable-dev-shm-usage` and `no-sandbox` that `wasm-bindgen-test-runner`
    already appends, and the `user-data-dir` the ruleset's wrapper appends.
    Plausible, and wrong: the same error is in the log from *before* those
-   flags existed. They were removed anyway -- the file is empty now -- but
-   that fixed nothing.
+   flags existed.
 2. **Missing GUI libraries.** The ruleset ships
    `test/bazelci_unix_setup.sh` to apt-install `libgtk-3-0`, `libatk1.0-0`,
-   `libgbm1` and friends on Linux workers, and this workflow never did. Also
-   wrong: a diagnostic step proved `ldd` reports nothing missing, and the
+   `libgbm1` and friends on Linux workers, and the workflow never did. Also
+   wrong: a diagnostic CI step proved `ldd` reports nothing missing, and the
    downloaded Chrome dumps a DOM with exit 0 on that runner. The apt step
    would have been cargo cult.
 3. **`chrome-headless-shell` instead of full Chrome.** The ruleset downloads
-   one, and it needs far fewer libraries. It does not work with
-   chromedriver: DevTools starts but exposes no targets, so the session POST
-   times out after 60s.
+   one and it needs far fewer libraries, but chromedriver cannot drive it:
+   DevTools starts and exposes no targets, so the session POST times out
+   after 60s.
 
-What is left, unproven: Chrome is healthy on the runner, so the problem is
-the launch `rules_rust_wasm_bindgen` performs -- chromedriver, inside Bazel's
-sandbox, with a **219-character** `--user-data-dir` under `test.outputs`.
-Chrome's process singleton is a Unix socket on Linux and a lock file on
-macOS, and that path is far past the ~108-byte `sun_path` limit, which would
-explain a failure on exactly one of the two platforms. The ruleset hardcodes
-that directory, so testing the theory means patching upstream.
+Left unproven: Chrome is healthy on the runner, so the problem is the launch
+`rules_rust_wasm_bindgen` performs -- chromedriver, inside Bazel's sandbox,
+with a **219-character** `--user-data-dir` under `test.outputs`. Chrome's
+process singleton is a Unix socket on Linux and a lock file on macOS, and
+that path is far past the ~108-byte `sun_path` limit, which would explain a
+failure on exactly one of the two platforms. The ruleset hardcodes that
+directory, so testing the theory means patching upstream.
 
-So the test is tagged `requires-macos` and `.bazelrc` filters it out when
-Bazel runs on Linux. It still *builds* there; only the run is skipped, next
-to the Apple tests that are already Mac-only. The OPFS behaviour itself is
-verified -- by that test on a Mac, and by hand in Chrome.
+Four CI rounds in, the question became whether durable browser history was
+worth a test that only ran on one platform, a dedicated worker, a
+`keyboard_keys()` API that existed to work around the worker, and a Chrome
+toolchain in the build graph. For a calculator's history: no. In-memory
+SQLite keeps everything the experiment was actually about -- one store
+implementation, one schema, compiled to five targets -- and every test runs
+everywhere again. The OPFS path is three commits back if it is ever wanted.
 
 ### Size
 
-The release web bundle goes from **128 KB to 1.43 MB**. Full-text search and
+The release web bundle goes from **128 KB to 1.27 MB**. Full-text search and
 r-trees are a third of that and a calculator needs neither, so
 `SQLITE_WASM_RS_FLAGS` drops FTS5, RTREE, session and the preupdate hook
 (1.79 MB -> 1.43 MB) via `build_script_env` on a `crate.annotation`. The

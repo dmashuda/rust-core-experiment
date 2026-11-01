@@ -79,30 +79,6 @@ crate.spec(
     version = WASM_BINDGEN_VERSION,
 )
 
-# The browser-side test harness (//bindings/wasm:calc_wasm_browser_test). Its
-# version has to pair with WASM_BINDGEN_VERSION, like the CLI does.
-crate.spec(
-    package = "wasm-bindgen-test",
-    repositories = ["crates"],
-    version = "0.3",
-)
-
-# An exported `async fn` compiles to a JS Promise through this crate.
-crate.spec(
-    package = "wasm-bindgen-futures",
-    repositories = ["crates"],
-    version = "0.4",
-)
-
-# The OPFS VFS, so the browser keeps its history across reloads. Separate
-# from sqlite-wasm-rs, and only the web binding depends on it.
-crate.spec(
-    default_features = False,
-    features = ["sahpool"],
-    package = "sqlite-wasm-vfs",
-    repositories = ["crates"],
-    version = "0.3.0",
-)
 crate.from_specs(
     name = "crates",
     supported_platform_triples = CRATE_TRIPLES,
@@ -120,8 +96,8 @@ crate.spec(
 )
 # default_features = False drops rustls, whose `ring` dependency does not
 # build under crate_universe (its build script's C and assembly never make it
-# to the link). The CLI only needs TLS to download webdrivers, and Bazel
-# supplies chromedriver, so nothing here misses it.
+# to the link). The CLI only needs TLS to download webdrivers, which nothing
+# here does.
 crate.spec(
     default_features = False,
     package = "wasm-bindgen-cli",
@@ -130,10 +106,7 @@ crate.spec(
 )
 crate.annotation(
     crate = "wasm-bindgen-cli",
-    gen_binaries = [
-        "wasm-bindgen",
-        "wasm-bindgen-test-runner",
-    ],
+    gen_binaries = ["wasm-bindgen"],
     repositories = ["tool_crates"],
 )
 crate.from_specs(

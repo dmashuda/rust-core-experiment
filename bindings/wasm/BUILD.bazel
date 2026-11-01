@@ -1,6 +1,6 @@
 load("@aspect_rules_js//js:defs.bzl", "js_library", "js_test")
 load("@rules_rust//rust:defs.bzl", "rust_shared_library")
-load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen", "rust_wasm_bindgen_test")
+load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen")
 
 # Compiled for wasm32 only: rust_wasm_bindgen below transitions into the
 # wasm platform, so this target is never built for the host.
@@ -13,10 +13,10 @@ rust_shared_library(
         "//core/calc_history_sqlite",
         "//core/calc_ui",
         "@crates//:rusqlite",
+        # sqlite-wasm-rs is what rusqlite links on wasm32; it is named here so
+        # its wasm-bindgen feature (the host hooks SQLite needs) is on.
         "@crates//:sqlite-wasm-rs",
-        "@crates//:sqlite-wasm-vfs",
         "@crates//:wasm-bindgen",
-        "@crates//:wasm-bindgen-futures",
     ],
 )
 
@@ -27,19 +27,6 @@ rust_wasm_bindgen(
     target = "web",
     visibility = ["//visibility:public"],
     wasm_file = ":calc_wasm",
-)
-
-# The crate's own #[wasm_bindgen_test]s, in headless Chrome. The only place
-# OPFS exists, so the only place the durable history can be tested.
-#
-# `requires-macos` keeps it out of `bazel test //...` on Linux (see .bazelrc):
-# Chrome dies during startup there when chromedriver launches it inside
-# Bazel's sandbox, and LOG.md section 16 records how far that was chased.
-# `bazel test //...` on a Mac still runs it.
-rust_wasm_bindgen_test(
-    name = "calc_wasm_browser_test",
-    tags = ["requires-macos"],
-    wasm = ":calc_wasm_bindgen",
 )
 
 # The same outputs, wrapped as a JS library so ts_project/esbuild targets can

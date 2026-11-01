@@ -141,35 +141,6 @@ fn is_typeable(c: char) -> bool {
     c.is_ascii_digit() || c.is_ascii_lowercase() || ".+-*/%^() ".contains(c)
 }
 
-/// The hardware keys the calculator acts on, as static data.
-///
-/// A front end that cannot call [`CalculatorUi::key_input`] synchronously has
-/// to know, at the moment of the key event, whether the calculator wants the
-/// key -- the web renderer draws in the page and runs the calculator in a
-/// worker, and `preventDefault()` cannot wait for a round trip. So the answer
-/// is published here instead of being reimplemented per platform, and like
-/// [`keypad`] it is fetched once rather than per keystroke.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeyboardKeys {
-    /// `KeyboardEvent.key` names that are acted on: Enter, Backspace, Escape.
-    pub named: Vec<String>,
-    /// Every single character that can be typed into the expression.
-    pub typeable: String,
-}
-
-/// The keys [`CalculatorUi::key_input`] accepts. See [`KeyboardKeys`].
-pub fn keyboard_keys() -> KeyboardKeys {
-    KeyboardKeys {
-        named: NAMED_KEYS.iter().map(|k| k.to_string()).collect(),
-        // Derived from `is_typeable` rather than written out again, so the
-        // list cannot drift from what `key_input` actually accepts.
-        typeable: (' '..='~').filter(|c| is_typeable(*c)).collect(),
-    }
-}
-
-/// Keys handled by name instead of being inserted as text.
-const NAMED_KEYS: &[&str] = &["Enter", "=", "Backspace", "Escape"];
-
 /// The calculator screen's state machine.
 pub struct CalculatorUi {
     calculator: Calculator,
@@ -514,28 +485,6 @@ mod tests {
         fn description(&self) -> String {
             "a store that refuses".to_string()
         }
-    }
-
-    #[test]
-    fn the_published_keyboard_keys_are_the_ones_key_input_accepts() {
-        let keys = keyboard_keys();
-        for name in &keys.named {
-            assert!(CalculatorUi::new().key_input(name).is_some(), "{name} is published but ignored");
-        }
-        for c in keys.typeable.chars() {
-            assert!(
-                CalculatorUi::new().key_input(&c.to_string()).is_some(),
-                "{c:?} is published but ignored"
-            );
-        }
-        // And nothing printable is accepted without being published.
-        for c in ' '..='~' {
-            let accepted = CalculatorUi::new().key_input(&c.to_string()).is_some();
-            let published = keys.typeable.contains(c) || keys.named.contains(&c.to_string());
-            assert_eq!(accepted, published, "{c:?}: accepted {accepted}, published {published}");
-        }
-        assert!(keys.typeable.contains('a'), "letters are typeable so `ans` can be typed");
-        assert!(!keys.typeable.contains('A'));
     }
 
     #[test]
