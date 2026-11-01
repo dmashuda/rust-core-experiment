@@ -3,18 +3,64 @@
 //! Proc-macro mode: no .udl file and no build.rs. Bindings are generated
 //! from the compiled library's embedded metadata (see //bindings/uniffi:BUILD).
 //!
-//! The records a renderer draws (`ViewModel`, `KeyRow`, ...) are `calc_ui`'s
-//! own types: this crate links `//core/calc_ui:calc_ui_uniffi`, which turns
-//! on the `uniffi` feature that puts the UniFFI derives on them. The bindgen
-//! then sees two components in one library, `calc_ui` for the records and
-//! `calc_ffi` for the object below, and emits a Swift file and a Kotlin file
-//! for each.
+//! The records a renderer draws are `calc_ui`'s own types, declared below as
+//! UniFFI *remote* types: each declaration repeats the type's shape, and
+//! UniFFI implements its FFI traits for the real `calc_ui` type from that.
+//! The repeat is checked by the compiler. Lifting builds the real struct
+//! from exactly the fields listed here, so a field added to or removed from
+//! `calc_ui` without a matching edit below is a build error, and the same
+//! goes for enum variants through an exhaustive `match`. There is no mirror
+//! type and no conversion: `CalculatorUi::view` returns `calc_ui`'s
+//! `ViewModel` as it is.
+//!
+//! Why not put the derives on `calc_ui` behind a crate feature, the way the
+//! wasm binding does? UniFFI would then treat `calc_ui` as a second
+//! component and generate a second Swift file, a second Kotlin package and a
+//! second set of scaffolding, and the bindgen would have to read the cdylib
+//! instead of the rlib (LOG.md section 17). The remote declarations cost a
+//! few checked lines here and leave all of that alone.
 
 use std::sync::Mutex;
 
-use calc_ui::{KeyRow, ViewModel};
+use calc_ui::{HistoryLine, KeyRow, KeySpec, KeyStyle, ViewModel};
 
 uniffi::setup_scaffolding!();
+
+#[uniffi::remote(Enum)]
+pub enum KeyStyle {
+    Input,
+    Function,
+    Operator,
+}
+
+#[uniffi::remote(Record)]
+pub struct KeySpec {
+    pub id: String,
+    pub label: String,
+    pub style: KeyStyle,
+    pub span: u32,
+}
+
+#[uniffi::remote(Record)]
+pub struct KeyRow {
+    pub keys: Vec<KeySpec>,
+}
+
+#[uniffi::remote(Record)]
+pub struct HistoryLine {
+    pub id: u64,
+    pub expression: String,
+    pub result: String,
+}
+
+#[uniffi::remote(Record)]
+pub struct ViewModel {
+    pub expression: String,
+    pub display: String,
+    pub is_error: bool,
+    pub history: Vec<HistoryLine>,
+    pub caption: String,
+}
 
 /// The keypad. Static, so a renderer asks for it once when it builds the
 /// screen rather than on every keystroke.

@@ -16,8 +16,9 @@ core/calc_core          Rust: expression evaluator + stateful Calculator (pure, 
 core/calc_ui            Rust: UI view model (keypad, input, keyboard, errors, history)
                         keypad() is static and fetched once; the ViewModel is
                         only what changes between keystrokes. Its types are
-                        defined here once and cross both FFIs as themselves:
-                        the `uniffi` and `wasm` crate features add the derives
+                        the ones the bindings hand out: the `wasm` feature
+                        adds wasm-bindgen's attributes, UniFFI declares them
+                        remote
 core/calc_history_sqlite  Rust: the SQLite HistoryStore (rusqlite), the only
                         crate that knows SQLite exists
 bindings/wasm           wasm-bindgen wrapper of calc_ui → JS/TS (web)

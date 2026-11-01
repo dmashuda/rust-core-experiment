@@ -7,17 +7,12 @@ load("@rules_swift//swift:swift.bzl", "swift_interop_hint", "swift_library")
 load("//tools/android:defs.bzl", "ANDROID_TARGET_COMPATIBLE_WITH")
 load("//tools/apple:defs.bzl", "APPLE_TARGET_COMPATIBLE_WITH")
 
-# The crate is compiled twice -- as an rlib for Apple linking, and as a
-# cdylib for the bindgen, the JVM and Android -- so the two targets share one
-# dep list rather than drifting apart.
-#
-# calc_ui_uniffi is calc_ui with its `uniffi` feature on: the records the
-# renderers draw carry UniFFI derives, so this crate passes them through
-# instead of mirroring them. The bindgen therefore finds two components in
-# the library, calc_ui and calc_ffi, and generates a file for each.
+# The crate is compiled twice -- as an rlib for the bindgen and Apple
+# linking, and as a cdylib for the JVM and Android -- so the two targets
+# share one dep list rather than drifting apart.
 CALC_FFI_DEPS = [
     "//core/calc_history_sqlite",
-    "//core/calc_ui:calc_ui_uniffi",
+    "//core/calc_ui",
     "@crates//:uniffi",
 ]
 
@@ -29,69 +24,52 @@ rust_library(
     deps = CALC_FFI_DEPS,
 )
 
-# Run uniffi-bindgen-swift in library mode against the compiled cdylib. The
-# cdylib rather than the rlib because the metadata for the records lives in
-# calc_ui, and only the final link brings every crate's metadata together in
-# one file. It is listed in `tools`, so it is built for the *exec* platform:
-# the generated Swift/C is platform-independent, so one generation serves
-# macOS, iOS device and iOS simulator builds alike.
-#
-# One .swift and one .h per component. uniffi.toml points calc_ui's Swift at
-# the same Clang module as calc_ffi's, so both headers go in one cc_library.
+# Run uniffi-bindgen-swift in library mode against the compiled rlib.
+# The rlib is listed in `tools`, so it is built for the *exec* platform: the
+# generated Swift/C is platform-independent, so one generation serves macOS,
+# iOS device and iOS simulator builds alike.
 genrule(
     name = "calc_ffi_swift_gen",
-    srcs = ["uniffi.toml"],
     outs = [
         "calc_ffi.swift",
         "calc_ffiFFI.h",
-        "calc_ui.swift",
-        "calc_uiFFI.h",
     ],
     cmd = """
         $(execpath //tools/uniffi:uniffi_bindgen_swift) \
             --swift-sources --headers \
-            --config $(execpath uniffi.toml) \
-            $(execpath :calc_ffi_shared) $(RULEDIR)
+            $(execpath :calc_ffi) $(RULEDIR)
     """,
     tools = [
-        ":calc_ffi_shared",
+        ":calc_ffi",
         "//tools/uniffi:uniffi_bindgen_swift",
     ],
 )
 
 # Kotlin bindings (for Android, and for a host JVM test). Same exec-config
-# trick as the Swift genrule above. One file per component, each in the
-# package uniffi.toml gives it.
+# trick as the Swift genrule above.
 genrule(
     name = "calc_ffi_kotlin_gen",
     srcs = ["uniffi.toml"],
-    outs = [
-        "dev/mashuda/calc/calc_ffi.kt",
-        "dev/mashuda/calc/ui/calc_ui.kt",
-    ],
+    outs = ["dev/mashuda/calc/calc_ffi.kt"],
     cmd = """
         $(execpath //tools/uniffi:uniffi_bindgen) generate --library \
             --language kotlin --no-format \
             --config $(execpath uniffi.toml) \
             --out-dir $(RULEDIR) \
-            $(execpath :calc_ffi_shared)
+            $(execpath :calc_ffi)
     """,
     tools = [
-        ":calc_ffi_shared",
+        ":calc_ffi",
         "//tools/uniffi:uniffi_bindgen",
     ],
 )
 
-# The C half: generated headers + the Rust code itself. rust_library provides
+# The C half: generated header + the Rust code itself. rust_library provides
 # CcInfo, so linking it here pulls the Rust objects (and std) into whatever
-# Apple binary ends up depending on this. The two headers share UniFFI's
-# common declarations behind an include guard, so one module holds both.
+# Apple binary ends up depending on this.
 cc_library(
     name = "calc_ffiFFI",
-    hdrs = [
-        "calc_ffiFFI.h",
-        "calc_uiFFI.h",
-    ],
+    hdrs = ["calc_ffiFFI.h"],
     aspect_hints = [":calc_ffiFFI_interop"],
     deps = [":calc_ffi"],
 )
@@ -102,16 +80,11 @@ swift_interop_hint(
     module_name = "calc_ffiFFI",
 )
 
-# The Swift half: what app code imports (`import CalcFFI`). Both generated
-# files go in this one module: the calc_ffi file uses the calc_ui records
-# by bare name, which is how UniFFI's Swift expects to be compiled.
+# The Swift half: what app code imports (`import CalcFFI`).
 swift_library(
     name = "CalcFFI",
     target_compatible_with = APPLE_TARGET_COMPATIBLE_WITH,
-    srcs = [
-        "calc_ffi.swift",
-        "calc_ui.swift",
-    ],
+    srcs = ["calc_ffi.swift"],
     module_name = "CalcFFI",
     visibility = ["//visibility:public"],
     deps = [":calc_ffiFFI"],
@@ -147,9 +120,8 @@ kt_jvm_library(
 )
 
 # The crate as a cdylib (lib<crate_name>.so/.dylib, no hash suffix). Built
-# for the exec platform it is what the bindgens read; built for the host it
-# backs the JVM test; built under android_binary's split transition it
-# becomes the Android libcalc_ffi.so.
+# for the host it backs the JVM test; built under android_binary's split
+# transition it becomes the Android libcalc_ffi.so.
 rust_shared_library(
     name = "calc_ffi_shared",
     srcs = ["src/lib.rs"],

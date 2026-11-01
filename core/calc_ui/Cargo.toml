@@ -1,6 +1,0 @@
-# Not used by Cargo. With the `uniffi` feature on, UniFFI's proc-macros read
-# `package.name` from $CARGO_MANIFEST_DIR/Cargo.toml to learn the crate's
-# module path; rules_rust sets CARGO_MANIFEST_DIR to this package, so this
-# stub must exist and the name must match the crate name.
-[package]
-name = "calc_ui"

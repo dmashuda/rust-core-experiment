@@ -1,7 +1,5 @@
 package dev.mashuda.calc
 
-import dev.mashuda.calc.ui.HistoryLine
-import dev.mashuda.calc.ui.KeyStyle
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,12 +14,8 @@ class CalcFfiKotlinTest {
         @BeforeClass
         fun loadRust() {
             // Point UniFFI's loader at the Bazel-built library (runfiles path).
-            // Both generated packages load it: the records come from the
-            // calc_ui component, the object and keypad() from calc_ffi.
             val lib = File(System.getenv("CALC_FFI_LIB")).absolutePath
-            for (component in listOf("calc_ffi", "calc_ui")) {
-                System.setProperty("uniffi.component.$component.libraryOverride", lib)
-            }
+            System.setProperty("uniffi.component.calc_ffi.libraryOverride", lib)
         }
     }
 

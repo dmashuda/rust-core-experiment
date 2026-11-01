@@ -17,9 +17,9 @@ import android.widget.GridLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import dev.mashuda.calc.CalculatorUi
+import dev.mashuda.calc.KeyStyle
+import dev.mashuda.calc.ViewModel
 import dev.mashuda.calc.keypad
-import dev.mashuda.calc.ui.KeyStyle
-import dev.mashuda.calc.ui.ViewModel
 import java.io.File
 
 /**

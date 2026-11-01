@@ -3,12 +3,6 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 # Platform-independent UI state machine: keypad layout, input handling,
 # display/error state and history formatting. Front ends only render the
 # ViewModel and feed key presses back in.
-#
-# The crate is built three ways from the same sources. The plain target is
-# FFI-free; the other two turn on a crate feature that adds the UniFFI or
-# wasm-bindgen derives to the types a renderer sees, so each binding crate
-# hands those types across its boundary as they are instead of mirroring
-# them. A binary links exactly one of the three (they share a crate name).
 CALC_UI_SRCS = glob(["src/**/*.rs"])
 
 rust_library(
@@ -24,23 +18,11 @@ rust_test(
     crate = ":calc_ui",
 )
 
-# For //bindings/uniffi. The stub Cargo.toml is read by UniFFI's proc-macros;
-# see the comment inside it.
-rust_library(
-    name = "calc_ui_uniffi",
-    srcs = CALC_UI_SRCS,
-    compile_data = ["Cargo.toml"],
-    crate_features = ["uniffi"],
-    crate_name = "calc_ui",
-    visibility = ["//bindings:__subpackages__"],
-    deps = [
-        "//core/calc_core",
-        "@crates//:uniffi",
-    ],
-)
-
-# For //bindings/wasm. wasm32 only: wasm-bindgen's derives have nothing to
-# attach to on a native target.
+# The same crate with its `wasm` feature on, for //bindings/wasm: the types a
+# renderer draws carry wasm-bindgen attributes, so the binding exports them
+# to JavaScript as they are rather than mirroring them. Same crate name as
+# above; a binary links one or the other. wasm32 only, because wasm-bindgen's
+# attributes have nothing to attach to on a native target.
 rust_library(
     name = "calc_ui_wasm",
     srcs = CALC_UI_SRCS,
