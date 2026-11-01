@@ -110,12 +110,11 @@ macos_unit_test(
     deps = [":CalcFFITestsLib"],
 )
 
-# Kotlin bindings compiled for the JVM. An Android app would use
-# kt_android_library with the same srcs plus the JNA AAR.
+# Kotlin bindings compiled for the JVM, for the host test below. The Android
+# app uses :calc_ffi_android_kt, the same srcs against the JNA AAR.
 kt_jvm_library(
     name = "calc_ffi_kt",
     srcs = [":calc_ffi_kotlin_gen"],
-    visibility = ["//visibility:public"],
     deps = ["@maven//:net_java_dev_jna_jna"],
 )
 

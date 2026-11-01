@@ -297,16 +297,21 @@ impl Calculator {
         let result = format_number(value);
         self.last = Some(value);
         let expression = input.trim().to_string();
+        // The id only has to be unique among what is on screen, which is the
+        // mirror. Normally that is the store's id. When the store refuses a
+        // write the mirror makes one up, and a store that then recovers may
+        // hand out that very number (a rolled-back INSERT consumes no
+        // AUTOINCREMENT value), so the store's id is never allowed to step
+        // back behind the mirror's.
+        let next_local = self.history.last().map_or(1, |e| e.id + 1);
         let id = match self.store.append(&expression, &result) {
             Ok(id) => {
                 self.store_error = Option::None;
-                id
+                id.max(next_local)
             }
-            // Keep going with an id of our own. It only has to be unique
-            // among what is on screen, which the mirror is.
             Err(e) => {
                 self.store_error = Some(e);
-                self.history.last().map_or(1, |e| e.id + 1)
+                next_local
             }
         };
         self.history.push(Entry { id, expression, result: result.clone() });
@@ -460,6 +465,47 @@ mod tests {
         assert_eq!(c.history(), [Entry { id: 1, expression: "6*7".into(), result: "42".into() }]);
         assert_eq!(c.evaluate("ans+1").unwrap(), "43");
         assert_eq!(c.history().iter().map(|e| e.id).collect::<Vec<_>>(), vec![1, 2], "ids stay unique");
+    }
+
+    /// A store that refuses the first write and takes the rest: a disk that
+    /// was briefly full, say.
+    #[derive(Debug, Default)]
+    struct RecoveringStore {
+        inner: MemoryHistory,
+        refusals_left: u32,
+    }
+
+    impl HistoryStore for RecoveringStore {
+        fn append(&mut self, expression: &str, result: &str) -> Result<u64, StoreError> {
+            if self.refusals_left > 0 {
+                self.refusals_left -= 1;
+                return Err(StoreError::new("disk is full"));
+            }
+            self.inner.append(expression, result)
+        }
+
+        fn entries(&self) -> Result<Vec<Entry>, StoreError> {
+            self.inner.entries()
+        }
+
+        fn clear(&mut self) -> Result<(), StoreError> {
+            self.inner.clear()
+        }
+
+        fn description(&self) -> String {
+            "a store that recovers".to_string()
+        }
+    }
+
+    #[test]
+    fn ids_stay_unique_when_the_store_fails_and_then_recovers() {
+        let store = RecoveringStore { refusals_left: 1, ..Default::default() };
+        let mut c = Calculator::with_store(Box::new(store)).unwrap();
+        c.evaluate("1").unwrap(); // refused: the mirror makes up id 1
+        c.evaluate("2").unwrap(); // stored: the store also assigns id 1
+        assert!(c.store_error().is_none(), "the store took the second write");
+        let ids: Vec<u64> = c.history().iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec![1, 2], "a store id is never reused on screen");
     }
 
     #[test]

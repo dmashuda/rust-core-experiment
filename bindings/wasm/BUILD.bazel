@@ -8,14 +8,13 @@ rust_shared_library(
     name = "calc_wasm",
     srcs = ["src/lib.rs"],
     target_compatible_with = ["@platforms//cpu:wasm32"],
+    # SQLite arrives through calc_history_sqlite; its wasm-bindgen feature
+    # (the host hooks SQLite needs) is turned on by the crate.spec in
+    # //bazel:crates.MODULE.bazel, not by anything named here.
     deps = [
         "//core/calc_core",
         "//core/calc_history_sqlite",
         "//core/calc_ui:calc_ui_wasm",
-        "@crates//:rusqlite",
-        # sqlite-wasm-rs is what rusqlite links on wasm32; it is named here so
-        # its wasm-bindgen feature (the host hooks SQLite needs) is on.
-        "@crates//:sqlite-wasm-rs",
         "@crates//:wasm-bindgen",
     ],
 )

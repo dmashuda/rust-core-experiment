@@ -1,5 +1,6 @@
 load("@rules_android//rules:rules.bzl", "android_binary")
 load("@rules_kotlin//kotlin:android.bzl", "kt_android_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools/android:defs.bzl", "ANDROID_TARGET_COMPATIBLE_WITH")
 
 kt_android_library(
@@ -21,4 +22,24 @@ android_binary(
         ":app_lib",
         "//bindings/uniffi:calc_ffi_android_native",
     ],
+)
+
+# The APK must carry the Rust library (and JNA's dispatcher, which loads it).
+# Nothing else checks that: the build passes without them, and the app then
+# dies on launch. See the script for why that can happen.
+sh_test(
+    name = "apk_contents_test",
+    size = "small",
+    srcs = ["apk_contents_test.sh"],
+    args = [
+        "$(rootpath @bazel_tools//tools/zip:zipper)",
+        "$(rootpath :calc_android.apk)",
+        "lib/arm64-v8a/libcalc_ffi.so",
+        "lib/arm64-v8a/libjnidispatch.so",
+    ],
+    data = [
+        ":calc_android.apk",
+        "@bazel_tools//tools/zip:zipper",
+    ],
+    target_compatible_with = ANDROID_TARGET_COMPATIBLE_WITH,
 )

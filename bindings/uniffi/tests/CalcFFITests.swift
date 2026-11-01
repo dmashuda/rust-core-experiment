@@ -40,6 +40,10 @@ final class CalcFFITests: XCTestCase {
         XCTAssertEqual(rows.last?.keys.last?.style, .operator)
         XCTAssertEqual(rows.last?.keys.last?.span, 2)
         XCTAssertEqual(rows, keypad())
+        XCTAssertEqual(keypadColumns(), 4)
+        for row in rows {
+            XCTAssertEqual(row.keys.reduce(0) { $0 + $1.span }, keypadColumns(), "every row fills the grid")
+        }
     }
 
     /// A database path of this test's own, inside the sandbox Bazel gives it.

@@ -1,11 +1,16 @@
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 # Pure Rust business logic. No FFI, no platform code: every front end
-# reaches this through a thin binding crate under //bindings.
+# reaches this through a thin binding crate under //bindings. The visibility
+# below is what makes that true: an app that depended on a core crate
+# directly would fail analysis rather than quietly bypass the bindings.
 rust_library(
     name = "calc_core",
     srcs = glob(["src/**/*.rs"]),
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//bindings:__subpackages__",
+        "//core:__subpackages__",
+    ],
 )
 
 rust_test(

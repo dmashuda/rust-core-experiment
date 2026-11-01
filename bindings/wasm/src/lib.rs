@@ -25,6 +25,13 @@ pub fn keypad() -> Vec<KeyRow> {
     calc_ui::keypad()
 }
 
+/// Width of the keypad grid in columns; every row's spans add up to it. The
+/// renderer sizes its grid from this rather than repeating the number in CSS.
+#[wasm_bindgen(js_name = keypadColumns)]
+pub fn keypad_columns() -> u32 {
+    calc_ui::KEYPAD_COLUMNS
+}
+
 /// The calculator screen.
 #[wasm_bindgen]
 pub struct CalculatorUi {

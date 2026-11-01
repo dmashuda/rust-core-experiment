@@ -60,6 +60,8 @@ class CalcFfiKotlinTest {
         assertEquals(KeyStyle.OPERATOR, rows.last().keys.last().style)
         assertEquals(2u, rows.last().keys.last().span)
         assertEquals(rows, keypad())
+        assertEquals(4u, keypadColumns())
+        rows.forEach { row -> assertEquals(keypadColumns(), row.keys.sumOf { it.span }) }
     }
 
     /** A database path of this test's own, inside Bazel's test sandbox. */
