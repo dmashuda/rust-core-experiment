@@ -3,21 +3,37 @@
 //! Proc-macro mode: no .udl file and no build.rs. Bindings are generated
 //! from the compiled library's embedded metadata (see //bindings/uniffi:BUILD).
 //!
-//! The records below mirror `calc_ui`'s types: UniFFI derives have to live in
-//! the crate that defines the type, and the core crates stay FFI-free.
+//! The records a renderer draws are `calc_ui`'s own types, declared below as
+//! UniFFI *remote* types: each declaration repeats the type's shape, and
+//! UniFFI implements its FFI traits for the real `calc_ui` type from that.
+//! The repeat is checked by the compiler. Lifting builds the real struct
+//! from exactly the fields listed here, so a field added to or removed from
+//! `calc_ui` without a matching edit below is a build error, and the same
+//! goes for enum variants through an exhaustive `match`. There is no mirror
+//! type and no conversion: `CalculatorUi::view` returns `calc_ui`'s
+//! `ViewModel` as it is.
+//!
+//! Why not put the derives on `calc_ui` behind a crate feature, the way the
+//! wasm binding does? UniFFI would then treat `calc_ui` as a second
+//! component and generate a second Swift file, a second Kotlin package and a
+//! second set of scaffolding, and the bindgen would have to read the cdylib
+//! instead of the rlib (LOG.md section 17). The remote declarations cost a
+//! few checked lines here and leave all of that alone.
 
 use std::sync::Mutex;
 
+use calc_ui::{HistoryLine, KeyRow, KeySpec, KeyStyle, ViewModel};
+
 uniffi::setup_scaffolding!();
 
-#[derive(uniffi::Enum)]
+#[uniffi::remote(Enum)]
 pub enum KeyStyle {
     Input,
     Function,
     Operator,
 }
 
-#[derive(uniffi::Record)]
+#[uniffi::remote(Record)]
 pub struct KeySpec {
     pub id: String,
     pub label: String,
@@ -25,19 +41,19 @@ pub struct KeySpec {
     pub span: u32,
 }
 
-#[derive(uniffi::Record)]
+#[uniffi::remote(Record)]
 pub struct KeyRow {
     pub keys: Vec<KeySpec>,
 }
 
-#[derive(uniffi::Record)]
+#[uniffi::remote(Record)]
 pub struct HistoryLine {
     pub id: u64,
     pub expression: String,
     pub result: String,
 }
 
-#[derive(uniffi::Record)]
+#[uniffi::remote(Record)]
 pub struct ViewModel {
     pub expression: String,
     pub display: String,
@@ -46,49 +62,11 @@ pub struct ViewModel {
     pub caption: String,
 }
 
-impl From<calc_ui::KeyStyle> for KeyStyle {
-    fn from(style: calc_ui::KeyStyle) -> Self {
-        match style {
-            calc_ui::KeyStyle::Input => KeyStyle::Input,
-            calc_ui::KeyStyle::Function => KeyStyle::Function,
-            calc_ui::KeyStyle::Operator => KeyStyle::Operator,
-        }
-    }
-}
-
-impl From<calc_ui::KeyRow> for KeyRow {
-    fn from(row: calc_ui::KeyRow) -> Self {
-        KeyRow {
-            keys: row
-                .keys
-                .into_iter()
-                .map(|k| KeySpec { id: k.id, label: k.label, style: k.style.into(), span: k.span })
-                .collect(),
-        }
-    }
-}
-
-impl From<calc_ui::ViewModel> for ViewModel {
-    fn from(vm: calc_ui::ViewModel) -> Self {
-        ViewModel {
-            expression: vm.expression,
-            display: vm.display,
-            is_error: vm.is_error,
-            history: vm
-                .history
-                .into_iter()
-                .map(|h| HistoryLine { id: h.id, expression: h.expression, result: h.result })
-                .collect(),
-            caption: vm.caption,
-        }
-    }
-}
-
 /// The keypad. Static, so a renderer asks for it once when it builds the
 /// screen rather than on every keystroke.
 #[uniffi::export]
 pub fn keypad() -> Vec<KeyRow> {
-    calc_ui::keypad().into_iter().map(Into::into).collect()
+    calc_ui::keypad()
 }
 
 /// The calculator screen. UniFFI objects are shared (`Arc`) across the FFI
@@ -120,18 +98,18 @@ impl CalculatorUi {
 
     /// The current state, for the initial render.
     pub fn view(&self) -> ViewModel {
-        self.inner.lock().unwrap().view().into()
+        self.inner.lock().unwrap().view()
     }
 
     /// An on-screen key was tapped.
     pub fn press(&self, id: String) -> ViewModel {
-        self.inner.lock().unwrap().press(&id).into()
+        self.inner.lock().unwrap().press(&id)
     }
 
     /// A hardware key: "Enter", "Backspace", "Escape" or one character.
     /// `None` means the calculator ignores it.
     pub fn key_input(&self, key: String) -> Option<ViewModel> {
-        self.inner.lock().unwrap().key_input(&key).map(Into::into)
+        self.inner.lock().unwrap().key_input(&key)
     }
 }
 

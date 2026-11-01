@@ -1,8 +1,11 @@
 //! wasm-bindgen surface over `calc_ui` for the web front end.
 //!
-//! Structs are exported as JS classes with getters (`getter_with_clone`).
-//! wasm-bindgen frees them through a FinalizationRegistry once JS drops
-//! them, so the renderer never has to call `.free()`.
+//! The classes JS sees for the view model (`ViewModel`, `KeyRow`, ...) are
+//! `calc_ui`'s own types: this crate links `//core/calc_ui:calc_ui_wasm`,
+//! which turns on the `wasm` feature that puts the wasm-bindgen attributes on
+//! them (getters via `getter_with_clone`). wasm-bindgen frees them through a
+//! FinalizationRegistry once JS drops them, so the renderer never has to
+//! call `.free()`.
 //!
 //! History is SQLite here too -- the same crate and schema the native apps
 //! use, compiled to wasm -- but held in SQLite's own memory, so it lasts as
@@ -12,92 +15,14 @@
 
 use calc_core::{Calculator, MemoryHistory};
 use calc_history_sqlite::SqliteHistory;
+use calc_ui::{KeyRow, ViewModel};
 use wasm_bindgen::prelude::*;
-
-#[wasm_bindgen]
-#[derive(Clone, Copy)]
-pub enum KeyStyle {
-    Input,
-    Function,
-    Operator,
-}
-
-#[wasm_bindgen(getter_with_clone)]
-#[derive(Clone)]
-pub struct KeySpec {
-    pub id: String,
-    pub label: String,
-    pub style: KeyStyle,
-    pub span: u32,
-}
-
-#[wasm_bindgen(getter_with_clone)]
-#[derive(Clone)]
-pub struct KeyRow {
-    pub keys: Vec<KeySpec>,
-}
-
-#[wasm_bindgen(getter_with_clone)]
-#[derive(Clone)]
-pub struct HistoryLine {
-    pub id: u64,
-    pub expression: String,
-    pub result: String,
-}
-
-#[wasm_bindgen(getter_with_clone)]
-pub struct ViewModel {
-    pub expression: String,
-    pub display: String,
-    #[wasm_bindgen(js_name = isError)]
-    pub is_error: bool,
-    pub history: Vec<HistoryLine>,
-    pub caption: String,
-}
-
-impl From<calc_ui::KeyStyle> for KeyStyle {
-    fn from(style: calc_ui::KeyStyle) -> Self {
-        match style {
-            calc_ui::KeyStyle::Input => KeyStyle::Input,
-            calc_ui::KeyStyle::Function => KeyStyle::Function,
-            calc_ui::KeyStyle::Operator => KeyStyle::Operator,
-        }
-    }
-}
-
-impl From<calc_ui::KeyRow> for KeyRow {
-    fn from(row: calc_ui::KeyRow) -> Self {
-        KeyRow {
-            keys: row
-                .keys
-                .into_iter()
-                .map(|k| KeySpec { id: k.id, label: k.label, style: k.style.into(), span: k.span })
-                .collect(),
-        }
-    }
-}
-
-impl From<calc_ui::ViewModel> for ViewModel {
-    fn from(vm: calc_ui::ViewModel) -> Self {
-        ViewModel {
-            expression: vm.expression,
-            display: vm.display,
-            is_error: vm.is_error,
-            history: vm
-                .history
-                .into_iter()
-                .map(|h| HistoryLine { id: h.id, expression: h.expression, result: h.result })
-                .collect(),
-            caption: vm.caption,
-        }
-    }
-}
 
 /// The keypad. Static, so the renderer asks for it once when it builds the
 /// screen rather than on every keystroke.
 #[wasm_bindgen]
 pub fn keypad() -> Vec<KeyRow> {
-    calc_ui::keypad().into_iter().map(Into::into).collect()
+    calc_ui::keypad()
 }
 
 /// The calculator screen.
@@ -125,19 +50,19 @@ impl CalculatorUi {
 
     /// The current state, for the initial render.
     pub fn view(&self) -> ViewModel {
-        self.inner.view().into()
+        self.inner.view()
     }
 
     /// An on-screen key was tapped.
     pub fn press(&mut self, id: &str) -> ViewModel {
-        self.inner.press(id).into()
+        self.inner.press(id)
     }
 
     /// A `KeyboardEvent.key`: "Enter", "Backspace", "Escape" or one
     /// character. `undefined` means the calculator ignores it.
     #[wasm_bindgen(js_name = keyInput)]
     pub fn key_input(&mut self, key: &str) -> Option<ViewModel> {
-        self.inner.key_input(key).map(Into::into)
+        self.inner.key_input(key)
     }
 }
 

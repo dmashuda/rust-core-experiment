@@ -7,11 +7,21 @@
 //!
 //! The keypad is static, so it comes from [`keypad`] once when a screen is
 //! built. [`ViewModel`] carries only what changes between keystrokes.
+//!
+//! The types a renderer sees are defined here once. The `wasm` crate feature
+//! (`//core/calc_ui:calc_ui_wasm`) adds the wasm-bindgen attributes to them,
+//! so the web binding hands them to JavaScript as they are. It is off in the
+//! default build, which keeps this crate FFI-free for everything else; the
+//! UniFFI binding declares them as remote types on its side instead, see
+//! `//bindings/uniffi` for why the two differ.
 
 use calc_core::Calculator;
+#[cfg(feature = "wasm")]
+use wasm_bindgen::prelude::wasm_bindgen;
 
 /// Visual role of a key; renderers map it to colors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub enum KeyStyle {
     /// Digits, the decimal point and similar inputs.
     Input,
@@ -23,6 +33,7 @@ pub enum KeyStyle {
 
 /// One on-screen key.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "wasm", wasm_bindgen(getter_with_clone))]
 pub struct KeySpec {
     /// Stable identifier passed back to [`CalculatorUi::press`].
     pub id: String,
@@ -35,12 +46,14 @@ pub struct KeySpec {
 
 /// One keypad row. Each row's spans add up to [`KEYPAD_COLUMNS`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "wasm", wasm_bindgen(getter_with_clone))]
 pub struct KeyRow {
     pub keys: Vec<KeySpec>,
 }
 
 /// One history line, newest first in [`ViewModel::history`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "wasm", wasm_bindgen(getter_with_clone))]
 pub struct HistoryLine {
     /// Stable for the life of the entry: a renderer keys its row views on
     /// this, so identity survives newer lines being prepended.
@@ -51,12 +64,14 @@ pub struct HistoryLine {
 
 /// Everything a renderer needs to draw the calculator.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "wasm", wasm_bindgen(getter_with_clone))]
 pub struct ViewModel {
     /// The expression being typed (may be empty).
     pub expression: String,
     /// The main display: the last result, or an error message.
     pub display: String,
     /// True when `display` holds an error message.
+    #[cfg_attr(feature = "wasm", wasm_bindgen(js_name = isError))]
     pub is_error: bool,
     pub history: Vec<HistoryLine>,
     /// Footer caption.

@@ -647,6 +647,8 @@ Findings:
    crate carries mirror types and a `From<calc_ui::ViewModel>` conversion
    (about 40 lines each). That is the price of keeping `core/` FFI-free.
    UniFFI's `remote` types are the alternative if the duplication grows.
+   *(Superseded by section 17: the derives now live in `calc_ui` behind
+   crate features, and the mirrors are gone.)*
 2. **Nested structs through wasm-bindgen work.** `Vec<KeyRow>` holding
    `Vec<KeySpec>` works with `#[wasm_bindgen(getter_with_clone)]`, and
    C-style enums arrive as TS enums. wasm-bindgen 0.2.121 emits a
@@ -1142,3 +1144,110 @@ that changes the C API would invalidate the pregenerated bindings.
    `rusqlite::Connection` is `unsafe impl Send` on every target, so the
    bound costs nothing -- but without it the `uniffi::Object` derive fails
    with an error pointing at the derive, not at the store.
+
+## 17. One definition of the view model (2026-10-31)
+
+Problem: `ViewModel`, `KeyRow`, `KeySpec`, `HistoryLine` and `KeyStyle` were
+written three times -- in `calc_ui`, again as `uniffi::Record` mirrors in
+`bindings/uniffi`, and again as `wasm_bindgen` mirrors in `bindings/wasm`,
+each with a `From` conversion. Adding a field meant three edits, and nothing
+failed if one was forgotten; a test had to happen to read the new field.
+
+Two designs were built. The first put every derive on `calc_ui` behind crate
+features; the second, which is what landed, does that for wasm only and uses
+UniFFI's remote types on the other side. The first is written up because its
+cost is the reason for the second.
+
+### Attempt 1: derives on `calc_ui` behind two crate features
+
+```
+core/calc_ui       #[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+                   #[cfg_attr(feature = "wasm", wasm_bindgen(getter_with_clone))]
+                   :calc_ui :calc_ui_uniffi :calc_ui_wasm   (one crate name, three targets)
+bindings/uniffi    links :calc_ui_uniffi; only CalculatorUi and keypad() remain
+bindings/wasm      links :calc_ui_wasm;   only CalculatorUi and keypad() remain
+```
+
+It worked, every test passed on macOS and in Linux CI, and the binding
+crates halved. The wasm half was free. The UniFFI half was not:
+
+1. **The bindgen had to read the cdylib, not the rlib.** Library mode
+   collects every crate's metadata symbols from one file. The `calc_ffi`
+   rlib holds only `calc_ffi`'s, so the bindgen failed with `unresolved
+   module path calc_ui` until both genrules were pointed at
+   `:calc_ffi_shared`.
+2. **UniFFI treated `calc_ui` as a second component.** A crate that only
+   defines records still needs `uniffi::setup_scaffolding!()` (that emits
+   the namespace metadata the bindgen groups types by) and the stub
+   `Cargo.toml` from section 4. The bindgen then emits a Swift file and a
+   Kotlin file per crate.
+3. **Kotlin: one package per crate.** Every generated Kotlin file declares
+   the same helpers (`RustBuffer`, `UniffiLib`, `FfiConverterString`...) at
+   package level, so two files in one package are a redeclaration error.
+   The records had to move to `dev.mashuda.calc.ui`, the app imported from
+   two packages for one API, and the JVM test had to set
+   `uniffi.component.<name>.libraryOverride` for both components.
+4. **Swift: one module for all generated files.** The generated Swift refers
+   to another crate's records by bare name and adds no `import`, so every
+   generated file must compile into the same Swift module. The two headers
+   also had to share one Clang module, which needed `ffi_module_name` and
+   `ffi_module_filename` overrides in `uniffi.toml`.
+
+Net: 241 lines added for 193 removed, and what was removed was trivial while
+what was added was build configuration that took a source dive to get right.
+Three targets for one crate, two Kotlin packages and a cdylib-fed bindgen is
+a lot of machinery to retire 70 lines of boring mirrors. Backed out.
+
+### What landed: wasm by feature, UniFFI by remote types
+
+**wasm.** `calc_ui` has a `wasm` crate feature that puts
+`#[wasm_bindgen(getter_with_clone)]` on the types (and `js_name = isError`
+on the one field whose name differs), built as
+`//core/calc_ui:calc_ui_wasm`, wasm32 only. wasm-bindgen exports every
+`#[wasm_bindgen]` item linked into the module regardless of crate, so the
+binding crate links that target, drops its mirrors, and `calc.d.ts` comes
+out the same. `bindings/wasm/src/lib.rs`: 148 lines to 73.
+
+**UniFFI.** `bindings/uniffi` declares the five types with
+`#[uniffi::remote(Record)]` and `#[uniffi::remote(Enum)]`:
+
+```rust
+use calc_ui::ViewModel;
+
+#[uniffi::remote(Record)]
+pub struct ViewModel {
+    pub expression: String,
+    pub display: String,
+    pub is_error: bool,
+    pub history: Vec<HistoryLine>,
+    pub caption: String,
+}
+```
+
+The declaration repeats the shape, but there is no second type and no
+`From`: UniFFI implements its FFI traits for the real `calc_ui::ViewModel`
+from the field list, and `CalculatorUi::view` returns `calc_ui`'s struct as
+it is. The repeat is **checked by the compiler**: lifting is a struct
+literal of exactly the listed fields, so a field added to or removed from
+`calc_ui` without a matching edit is `E0063 missing field` or `E0560 no
+field`; for enums, lowering is an exhaustive `match`, so a new variant is
+`E0004`. That is the guarantee the mirrors lacked. UniFFI sees one
+component, the bindgen still reads the rlib, and nothing in `uniffi.toml`,
+the Swift module layout, the Kotlin package or the apps changes.
+`bindings/uniffi/src/lib.rs`: 142 lines to 120, and what remains is
+declarations the compiler checks, not conversions a test has to exercise.
+
+Findings:
+
+1. **The two FFIs want different shapes, so treat them differently.**
+   wasm-bindgen is crate-agnostic and a `cfg_attr` costs nothing. UniFFI
+   is organised around components with their own scaffolding, and a type
+   that moves crates moves modules and packages with it. Remote types exist
+   precisely so the defining crate need not know about UniFFI.
+2. **Remote types are a compile-time contract, not a mirror.** The field
+   list in the declaration must equal the real struct's, in both
+   directions, or the crate does not build. That makes it the right tool
+   when the goal is "drift is impossible" rather than "write it once".
+3. **Measure the explanation.** When the LOG entry needed to explain a
+   consolidation runs longer than the code it removed, the consolidation is
+   paying for itself in the wrong currency.

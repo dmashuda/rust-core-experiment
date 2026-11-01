@@ -3,9 +3,11 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 # Platform-independent UI state machine: keypad layout, input handling,
 # display/error state and history formatting. Front ends only render the
 # ViewModel and feed key presses back in.
+CALC_UI_SRCS = glob(["src/**/*.rs"])
+
 rust_library(
     name = "calc_ui",
-    srcs = glob(["src/**/*.rs"]),
+    srcs = CALC_UI_SRCS,
     visibility = ["//visibility:public"],
     deps = ["//core/calc_core"],
 )
@@ -14,4 +16,22 @@ rust_test(
     name = "calc_ui_test",
     size = "small",
     crate = ":calc_ui",
+)
+
+# The same crate with its `wasm` feature on, for //bindings/wasm: the types a
+# renderer draws carry wasm-bindgen attributes, so the binding exports them
+# to JavaScript as they are rather than mirroring them. Same crate name as
+# above; a binary links one or the other. wasm32 only, because wasm-bindgen's
+# attributes have nothing to attach to on a native target.
+rust_library(
+    name = "calc_ui_wasm",
+    srcs = CALC_UI_SRCS,
+    crate_features = ["wasm"],
+    crate_name = "calc_ui",
+    target_compatible_with = ["@platforms//cpu:wasm32"],
+    visibility = ["//bindings:__subpackages__"],
+    deps = [
+        "//core/calc_core",
+        "@crates//:wasm-bindgen",
+    ],
 )
