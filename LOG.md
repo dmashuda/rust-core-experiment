@@ -647,6 +647,8 @@ Findings:
    crate carries mirror types and a `From<calc_ui::ViewModel>` conversion
    (about 40 lines each). That is the price of keeping `core/` FFI-free.
    UniFFI's `remote` types are the alternative if the duplication grows.
+   *(Superseded by section 17: the derives now live in `calc_ui` behind
+   crate features, and the mirrors are gone.)*
 2. **Nested structs through wasm-bindgen work.** `Vec<KeyRow>` holding
    `Vec<KeySpec>` works with `#[wasm_bindgen(getter_with_clone)]`, and
    C-style enums arrive as TS enums. wasm-bindgen 0.2.121 emits a
@@ -1142,3 +1144,68 @@ that changes the C API would invalidate the pregenerated bindings.
    `rusqlite::Connection` is `unsafe impl Send` on every target, so the
    bound costs nothing -- but without it the `uniffi::Object` derive fails
    with an error pointing at the derive, not at the store.
+
+## 17. One definition of the view model (2026-10-31)
+
+Problem: `ViewModel`, `KeyRow`, `KeySpec`, `HistoryLine` and `KeyStyle` were
+written three times -- in `calc_ui`, again as `uniffi::Record` mirrors in
+`bindings/uniffi`, and again as `wasm_bindgen` mirrors in `bindings/wasm`,
+each with a `From` conversion. Adding a field meant three edits, and nothing
+failed if one was forgotten; a test had to happen to read the new field.
+
+Design: the derives move onto `calc_ui`'s own types, behind two crate
+features, and the binding crates pass the types through:
+
+```
+core/calc_ui       #[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+                   #[cfg_attr(feature = "wasm", wasm_bindgen(getter_with_clone))]
+                   :calc_ui         plain, FFI-free (what the tests build)
+                   :calc_ui_uniffi  crate_features = ["uniffi"], deps + uniffi
+                   :calc_ui_wasm    crate_features = ["wasm"],   deps + wasm-bindgen
+bindings/uniffi    links :calc_ui_uniffi; only CalculatorUi and keypad() remain
+bindings/wasm      links :calc_ui_wasm;   only CalculatorUi and keypad() remain
+```
+
+Three `rust_library` targets share the sources and the crate name; a binary
+links exactly one. The default build has neither feature, so `core/` is still
+FFI-free unless a binding asks. `bindings/uniffi/src/lib.rs` went from 142
+lines to 74 and `bindings/wasm/src/lib.rs` from 148 to 73. No app code
+changed except two Kotlin imports.
+
+Findings:
+
+1. **The bindgen has to read the cdylib, not the rlib.** UniFFI library
+   mode collects every crate's metadata symbols from one file. The rlib of
+   `calc_ffi` holds only `calc_ffi`'s; `calc_ui`'s live in its own rlib, and
+   the bindgen failed with `unresolved module path calc_ui`. Pointing both
+   genrules at `:calc_ffi_shared` (built for the exec platform, like the
+   rlib was) fixes it, because the final link brings the crates together.
+2. **UniFFI then sees two components and emits a file per crate**, Swift and
+   Kotlin alike. A crate that only defines records still needs
+   `uniffi::setup_scaffolding!()` (that is what emits the namespace metadata
+   the bindgen groups types by) and therefore the stub `Cargo.toml` trick
+   from section 4 for the proc-macros to learn its name.
+3. **Kotlin: one package per crate.** Every generated Kotlin file declares
+   the same helpers (`RustBuffer`, `UniffiLib`, `FfiConverterString`...) at
+   package level, so two files in one package are a redeclaration error.
+   `calc_ui`'s records go to `dev.mashuda.calc.ui`; the generated `calc_ffi`
+   file imports them (library mode fills `external_packages` by itself), and
+   app code imports `KeyStyle` and `ViewModel` from there. Each package loads
+   the library separately, so the JVM test sets
+   `uniffi.component.<name>.libraryOverride` for *both* components, and
+   `cdylib_name` is set for both in `uniffi.toml`.
+4. **Swift: one module for all generated files.** The generated Swift
+   references another crate's records by bare name and adds no `import`, so
+   UniFFI expects every generated file to be compiled into the same Swift
+   module (which is how Mozilla ships theirs). Both files go in the
+   `CalcFFI` `swift_library`. The C side is one Clang module too: both
+   headers in one `cc_library`, which works because the shared declarations
+   sit behind UniFFI's `UNIFFI_SHARED_H` guard. `uniffi.toml` sets
+   `ffi_module_name = "calc_ffiFFI"` for `calc_ui` so both files `import`
+   the same module, and `ffi_module_filename = "calc_uiFFI"` so the two
+   headers do not overwrite each other in the output directory.
+5. **wasm needed nothing.** wasm-bindgen exports every `#[wasm_bindgen]`
+   item linked into the final module regardless of which crate it came
+   from, and `getter_with_clone` plus a per-field `js_name = isError` work
+   as `cfg_attr`s. The generated `calc.d.ts` exports the same classes,
+   fields and `keypad()` as before, so `apps/web` did not change.

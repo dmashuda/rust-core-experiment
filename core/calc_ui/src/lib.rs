@@ -7,11 +7,25 @@
 //!
 //! The keypad is static, so it comes from [`keypad`] once when a screen is
 //! built. [`ViewModel`] carries only what changes between keystrokes.
+//!
+//! The types a renderer sees are defined here once, and cross each FFI
+//! boundary as themselves: the `uniffi` and `wasm` crate features add the
+//! UniFFI and wasm-bindgen derives to them (`//core/calc_ui:calc_ui_uniffi`
+//! and `:calc_ui_wasm`). Neither feature is on in the default build, so this
+//! crate stays FFI-free unless a binding asks otherwise, and a field added
+//! here reaches Swift, Kotlin and TypeScript with no mirror to update.
 
 use calc_core::Calculator;
+#[cfg(feature = "wasm")]
+use wasm_bindgen::prelude::wasm_bindgen;
+
+#[cfg(feature = "uniffi")]
+uniffi::setup_scaffolding!();
 
 /// Visual role of a key; renderers map it to colors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub enum KeyStyle {
     /// Digits, the decimal point and similar inputs.
     Input,
@@ -23,6 +37,8 @@ pub enum KeyStyle {
 
 /// One on-screen key.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", wasm_bindgen(getter_with_clone))]
 pub struct KeySpec {
     /// Stable identifier passed back to [`CalculatorUi::press`].
     pub id: String,
@@ -35,12 +51,16 @@ pub struct KeySpec {
 
 /// One keypad row. Each row's spans add up to [`KEYPAD_COLUMNS`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", wasm_bindgen(getter_with_clone))]
 pub struct KeyRow {
     pub keys: Vec<KeySpec>,
 }
 
 /// One history line, newest first in [`ViewModel::history`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", wasm_bindgen(getter_with_clone))]
 pub struct HistoryLine {
     /// Stable for the life of the entry: a renderer keys its row views on
     /// this, so identity survives newer lines being prepended.
@@ -51,12 +71,15 @@ pub struct HistoryLine {
 
 /// Everything a renderer needs to draw the calculator.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
+#[cfg_attr(feature = "wasm", wasm_bindgen(getter_with_clone))]
 pub struct ViewModel {
     /// The expression being typed (may be empty).
     pub expression: String,
     /// The main display: the last result, or an error message.
     pub display: String,
     /// True when `display` holds an error message.
+    #[cfg_attr(feature = "wasm", wasm_bindgen(js_name = isError))]
     pub is_error: bool,
     pub history: Vec<HistoryLine>,
     /// Footer caption.

@@ -11,7 +11,7 @@ rust_shared_library(
     deps = [
         "//core/calc_core",
         "//core/calc_history_sqlite",
-        "//core/calc_ui",
+        "//core/calc_ui:calc_ui_wasm",
         "@crates//:rusqlite",
         # sqlite-wasm-rs is what rusqlite links on wasm32; it is named here so
         # its wasm-bindgen feature (the host hooks SQLite needs) is on.
