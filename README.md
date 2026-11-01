@@ -36,7 +36,7 @@ apps/android            renderer: Kotlin (plain Views) + android_binary; Rust sh
 
 | Command | What it does |
 | --- | --- |
-| `bazel test //...` | Rust unit tests (evaluator, view model, SQLite store), wasm-in-Node test, web renderer test (bundle + stub DOM), tsc typecheck, Swift XCTest (bindings + UI snapshot), Kotlin JUnit via JNA, dev-server test |
+| `bazel test //...` | Rust unit tests (evaluator, view model, SQLite store), wasm-in-Node test, web renderer test (bundle + stub DOM), tsc typecheck, Swift XCTest (bindings + UI snapshot), Kotlin JUnit via JNA, APK contents check (the Rust `.so` is inside), dev-server test |
 | `bazel run //apps/web:serve` | Web app on http://localhost:8080 |
 | `bazel run //apps/macos:CalculatorMac` | Build and launch the macOS app |
 | `bazel build //apps/ios:CalculatorIOS` | iOS simulator `.ipa` |

@@ -2,7 +2,7 @@
 // the Rust -> wasm -> JS path without a browser.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import init, { CalculatorUi, KeyStyle, keypad } from "./calc_wasm_bindgen/calc.js";
+import init, { CalculatorUi, KeyStyle, keypad, keypadColumns } from "./calc_wasm_bindgen/calc.js";
 
 const wasm = await readFile(new URL("./calc_wasm_bindgen/calc_bg.wasm", import.meta.url));
 await init({ module_or_path: wasm });
@@ -12,6 +12,10 @@ const rows = keypad();
 assert.equal(rows[0].keys[0].label, "C");
 assert.equal(rows.at(-1).keys.at(-1).style, KeyStyle.Operator);
 assert.equal(rows.at(-1).keys.at(-1).span, 2);
+assert.equal(keypadColumns(), 4);
+for (const row of rows) {
+  assert.equal(row.keys.reduce((n, k) => n + k.span, 0), keypadColumns(), "every row fills the grid");
+}
 
 const ui = new CalculatorUi();
 let vm = ui.view();

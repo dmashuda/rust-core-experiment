@@ -2,13 +2,13 @@
 //!
 //! This is the only crate that knows SQLite exists. `calc_core` sees a
 //! [`HistoryStore`]; the front ends decide where the file goes (an app
-//! sandbox on Apple and Android, an OPFS-backed VFS in the browser) and hand
-//! the path to [`SqliteHistory::open`].
+//! sandbox on Apple and Android) and hand the path to [`SqliteHistory::open`].
+//! The browser has nowhere to put a file and uses [`SqliteHistory::in_memory`]
+//! (LOG.md section 16 has why OPFS came out).
 //!
 //! On `wasm32-unknown-unknown` there is no libsqlite3 to link, so `rusqlite`
 //! builds against `sqlite-wasm-rs`, which compiles the same amalgamation to
-//! wasm. Nothing in this file is conditional on the target: the VFS is
-//! whatever the caller installed before opening.
+//! wasm. Nothing in this file is conditional on the target.
 
 use calc_core::{Calculator, Entry, HISTORY_LIMIT, HistoryStore, MemoryHistory, StoreError};
 use rusqlite::{Connection, OptionalExtension};
@@ -40,12 +40,11 @@ impl SqliteHistory {
         Self::from_connection(Connection::open_in_memory().map_err(to_store_error)?, "memory")
     }
 
-    /// Wraps a connection opened elsewhere -- by a front end that had to
-    /// install a VFS first, say -- and applies the schema.
+    /// Applies the schema to an open connection.
     ///
-    /// `storage` says where the bytes are going ("file", "OPFS"); it ends up
-    /// in the footer caption of every front end, so write it for a reader.
-    pub fn from_connection(conn: Connection, storage: &str) -> Result<Self, StoreError> {
+    /// `storage` says where the bytes are going ("file", "memory"); it ends
+    /// up in the footer caption of every front end, so write it for a reader.
+    fn from_connection(conn: Connection, storage: &str) -> Result<Self, StoreError> {
         let store =
             SqliteHistory { conn, description: format!("SQLite {} ({storage})", rusqlite::version()) };
         store.migrate()?;

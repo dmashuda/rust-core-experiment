@@ -8,7 +8,10 @@ CALC_UI_SRCS = glob(["src/**/*.rs"])
 rust_library(
     name = "calc_ui",
     srcs = CALC_UI_SRCS,
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//bindings:__subpackages__",
+        "//core:__subpackages__",
+    ],
     deps = ["//core/calc_core"],
 )
 

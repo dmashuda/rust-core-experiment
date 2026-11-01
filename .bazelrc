@@ -1,5 +1,3 @@
-common --enable_platform_specific_config
-
 # Aspect's rulesets report ruleset/version usage home on every build.
 common --repo_env=DO_NOT_TRACK=1
 
@@ -15,7 +13,7 @@ common --@rules_rust//rust/settings:rustfmt.toml=//:.rustfmt.toml
 # Pick up per-user overrides last.
 try-import %workspace%/user.bazelrc
 
-# Optimised builds (wasm drops from ~240 KB to ~125 KB, and the JS is minified).
+# Optimised builds: smaller wasm (sizes in the README) and minified JS.
 build:release --compilation_mode=opt
 
 # Required when a non-Rust linker (Swift/clang via rules_apple, or the

@@ -6,7 +6,10 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 rust_library(
     name = "calc_history_sqlite",
     srcs = glob(["src/**/*.rs"]),
-    visibility = ["//visibility:public"],
+    visibility = [
+        "//bindings:__subpackages__",
+        "//core:__subpackages__",
+    ],
     deps = [
         "//core/calc_core",
         "@crates//:rusqlite",

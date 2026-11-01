@@ -4,6 +4,7 @@ import init, {
   CalculatorUi,
   KeyStyle,
   keypad,
+  keypadColumns,
   type ViewModel,
 } from "../../../bindings/wasm/calc_wasm_bindgen/calc.js";
 
@@ -26,6 +27,7 @@ const STYLE_CLASS: Record<KeyStyle, string> = {
 // The keypad is static, so the buttons are built once. One delegated listener
 // serves all of them, so no per-render closures either.
 function buildKeypad() {
+  keysEl.style.gridTemplateColumns = `repeat(${keypadColumns()}, 1fr)`;
   const rows = keypad();
   keysEl.replaceChildren(
     ...rows.flatMap((row) => {

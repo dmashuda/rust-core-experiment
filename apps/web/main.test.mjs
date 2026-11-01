@@ -70,6 +70,7 @@ assert.equal(keys.children.length, 23, "every key has a button");
 assert.deepEqual(keys.children.at(0).textContent, "C");
 assert.equal(keys.children.at(-1).dataset.id, "evaluate");
 assert.equal(keys.children.at(-1).style.gridColumn, "span 2");
+assert.equal(keys.style.gridTemplateColumns, "repeat(4, 1fr)", "the grid width comes from Rust, not CSS");
 assert.match(caption.textContent, /WebAssembly/);
 const buttonsBefore = [...keys.children];
 const press = (id) => dispatch(keys.children.find((b) => b.dataset.id === id), "click");

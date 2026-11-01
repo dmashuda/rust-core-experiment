@@ -20,6 +20,7 @@ import dev.mashuda.calc.CalculatorUi
 import dev.mashuda.calc.KeyStyle
 import dev.mashuda.calc.ViewModel
 import dev.mashuda.calc.keypad
+import dev.mashuda.calc.keypadColumns
 import java.io.File
 
 /**
@@ -124,7 +125,7 @@ class MainActivity : Activity() {
     private fun buildKeypad(): GridLayout {
         val grid = GridLayout(this)
         val rows = keypad()
-        grid.columnCount = rows.maxOf { row -> row.keys.sumOf { it.span.toInt() } }
+        grid.columnCount = keypadColumns().toInt()
         for (row in rows) {
             for (key in row.keys) {
                 val isOperator = key.style == KeyStyle.OPERATOR

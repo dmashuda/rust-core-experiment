@@ -1,6 +1,7 @@
 /bazel-*
 /rust-project.json
 /.rules_rust_analyzer/
+/.idea/
 /target
 .DS_Store
 user.bazelrc

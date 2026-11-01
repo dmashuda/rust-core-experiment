@@ -24,9 +24,11 @@ The ten things that mattered most:
    like any C library. The app targets never mention Rust.
 3. When a non-Rust linker links rlibs, set
    `--@rules_rust//rust/settings:experimental_use_allocator_libraries_with_mangled_symbols=True`.
-4. wasm: use `rules_rust_wasm_bindgen`'s *own* `wasm_bindgen` crate, because
-   the crate and CLI versions must match exactly. The rule transitions to
-   wasm32 for you.
+4. wasm: the `wasm-bindgen` crate and CLI versions must match exactly. The
+   ruleset ships a matched pair, which is enough until another crate needs
+   a newer wasm-bindgen (sqlite-wasm-rs did); then build the CLI from source
+   and register your own toolchain (`//tools/wasm_bindgen`, section 16). The
+   rule transitions to wasm32 for you either way.
 5. UniFFI in Bazel: build the bindgen from source with
    `default-features = false` (no `cargo metadata`). Give the proc-macros a
    stub `Cargo.toml` via `compile_data`. Run library mode on the rlib in
@@ -60,8 +62,8 @@ tools need Java 17 flags.
 **Update: history is in SQLite** (section 16). One `rusqlite` dependency
 and one `HistoryStore` implementation serve all four platforms -- a file in
 the app sandbox on Apple and Android, SQLite's in-memory VFS in the browser.
-Getting there needed a wasm32 C/C++ toolchain and our own wasm-bindgen CLI,
-which **reverses finding 4 above**. Durable browser history through OPFS was
+Getting there needed a wasm32 C/C++ toolchain and our own wasm-bindgen CLI
+(finding 4 above was rewritten for it). Durable browser history through OPFS was
 built and then backed out: it needs a dedicated worker, and its test could
 not be made to run on Linux CI.
 
@@ -1109,7 +1111,9 @@ everywhere again. The OPFS path is three commits back if it is ever wanted.
 The release web bundle goes from **128 KB to 1.27 MB**. Full-text search and
 r-trees are a third of that and a calculator needs neither, so
 `SQLITE_WASM_RS_FLAGS` drops FTS5, RTREE, session and the preupdate hook
-(1.79 MB -> 1.43 MB) via `build_script_env` on a `crate.annotation`. The
+(measured at the time as 1.79 MB -> 1.43 MB; on 2026-10-31 the release
+`calc_bg.wasm` is 1,327,147 bytes, the 1.27 MB the README quotes) via
+`build_script_env` on a `crate.annotation`. The
 other dozen `FULL_FEATURED` flags were measured too and came to 42 KB
 between them, which is not worth diverging from a stock SQLite for. Only
 flags adding SQL functions or internal virtual tables were touched; anything

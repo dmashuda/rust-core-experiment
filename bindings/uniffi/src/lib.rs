@@ -69,6 +69,13 @@ pub fn keypad() -> Vec<KeyRow> {
     calc_ui::keypad()
 }
 
+/// Width of the keypad grid in columns; every row's spans add up to it. A
+/// renderer sizes its grid from this rather than repeating the number.
+#[uniffi::export]
+pub fn keypad_columns() -> u32 {
+    calc_ui::KEYPAD_COLUMNS
+}
+
 /// The calculator screen. UniFFI objects are shared (`Arc`) across the FFI
 /// boundary and may be called from any thread, hence the `Mutex`.
 #[derive(uniffi::Object)]
