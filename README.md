@@ -40,8 +40,52 @@ apps/android            renderer: Kotlin (plain Views) + android_binary; Rust sh
 | `bazel run //apps/web:serve` | Web app on http://localhost:8080 |
 | `bazel run //apps/macos:CalculatorMac` | Build and launch the macOS app |
 | `bazel build //apps/ios:CalculatorIOS` | iOS simulator `.ipa` |
+| `bazel build --config=ios_device //apps/ios:CalculatorIOS` | iPhone `.ipa`, signed with your Xcode profile; see [Installing on an iPhone](#installing-on-an-iphone) |
 | `bazel build //apps/android:calc_android` | Android APK (arm64-v8a); `adb install -r bazel-bin/apps/android/calc_android.apk`. Build that target on its own: `bazel build //...` repoints `bazel-bin` at a configuration the APK is not in |
 | `bazel build --config=release //apps/web:site` | Optimized web bundle (~1.27 MB wasm, most of it SQLite; only `opt` minifies the JS) |
+
+### Installing on an iPhone
+
+A device build has to be signed. The build uses the provisioning profile Xcode
+creates for the app's bundle id, `dev.mashuda.rustcalc`, so it needs a Mac with
+Xcode and a free Apple Account; a paid developer account is not required.
+These steps are done once per Mac and phone.
+
+1. **Sign in to Xcode** with your Apple Account (the one you use for iCloud):
+   Xcode → Settings → Accounts → **+** → Apple ID. Xcode creates a free
+   "Personal Team" for it.
+2. **Connect the iPhone** by USB, unlock it and tap **Trust** on the "Trust
+   This Computer?" prompt.
+3. **Turn on Developer Mode** on the phone: Settings → Privacy & Security →
+   Developer Mode (at the bottom), then **Restart**. After the restart, unlock
+   the phone and tap **Turn On**. The switch is hidden until the phone has been
+   connected to a Mac with Xcode open.
+4. **Create the signing certificate and profile.** In Xcode, make a new iOS App
+   project with the bundle identifier `dev.mashuda.rustcalc`, choose your
+   Personal Team under Signing & Capabilities ("Automatically manage signing"
+   on), and run it on the phone once. This registers the phone with your team
+   and creates the profile `iOS Team Provisioning Profile: dev.mashuda.rustcalc`,
+   which `apps/ios/BUILD.bazel` looks up by name. You can delete the project
+   afterwards.
+5. **Build and install:**
+
+   ```sh
+   bazel build --config=ios_device //apps/ios:CalculatorIOS
+   xcrun devicectl list devices      # the phone's identifier
+   xcrun devicectl device install app --device <identifier> \
+       bazel-bin/apps/ios/CalculatorIOS.ipa
+   ```
+
+6. **Trust the developer certificate** on the phone, once: Settings → General →
+   VPN & Device Management → Apple Development: *your email* → **Trust**.
+   Until then the app is installed but will not open.
+
+With a free account the app stops opening after 7 days; build and install
+again. If the profile has expired too, the build fails with "no provisioning
+profile was found"; run the Xcode project from step 4 on the phone again.
+If Xcode says `dev.mashuda.rustcalc` is not available to your team, choose
+another bundle id and change both `bundle_id` and `profile_name` in
+`apps/ios/BUILD.bazel` to match it.
 
 ### Checks
 
