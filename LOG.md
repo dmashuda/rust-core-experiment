@@ -67,8 +67,8 @@ Getting there needed a wasm32 C/C++ toolchain and our own wasm-bindgen CLI
 built and then backed out: it needs a dedicated worker, and its test could
 not be made to run on Linux CI.
 
-Not done: running on an iOS simulator (no runtime installed), and a signed
-iOS device build (needs a provisioning profile).
+Not done: running on an iOS simulator (no runtime installed). A signed iOS
+device build now works with the developer's local Xcode profile (section 6).
 
 ---
 
@@ -380,7 +380,7 @@ Findings:
 
 ```
 bazel build //apps/ios:CalculatorIOS                    # simulator .ipa (default on Apple Silicon)
-bazel build --config=ios_device //apps/ios:CalculatorIOS  # needs provisioning_profile
+bazel build --config=ios_device //apps/ios:CalculatorIOS  # signed with the local Xcode profile
 ```
 
 - **Built on the first try for the simulator.** `//apps/ios` is about 20
@@ -397,6 +397,13 @@ bazel build --config=ios_device //apps/ios:CalculatorIOS  # needs provisioning_p
   compiles the Rust core and Swift for `aarch64-apple-ios`. Only signing
   remains, either a `.mobileprovision` checked in or fetched, or
   `local_provisioning_profile` from rules_apple.
+  **Update:** signing now uses `local_provisioning_profile`, which finds the
+  profile Xcode creates for the bundle id ("iOS Team Provisioning Profile:
+  dev.mashuda.rustcalc") in `~/Library/Developer/Xcode/UserData/Provisioning
+  Profiles`. It is chosen with a `select` on
+  `@apple_support//constraints:device`: set unconditionally, its lookup also
+  ran for simulator builds and failed on a Mac without the profile. Installed
+  and run on an iPhone 15. Setup steps are in the README.
 - Not run: no iOS Simulator *runtime* is installed (`xcrun simctl list runtimes`
   is empty, and `xcodebuild -downloadPlatform iOS` is a multi-GB download).
   The same applies to `ios_unit_test`. The macOS snapshot test already

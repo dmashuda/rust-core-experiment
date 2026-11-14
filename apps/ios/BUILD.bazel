@@ -1,3 +1,4 @@
+load("@rules_apple//apple:apple.bzl", "local_provisioning_profile")
 load("@rules_apple//apple:ios.bzl", "ios_application")
 load("@rules_swift//swift:swift.bzl", "swift_library")
 load("//tools/apple:defs.bzl", "APPLE_TARGET_COMPATIBLE_WITH")
@@ -9,10 +10,20 @@ swift_library(
     deps = ["//apps/apple/CalculatorUI"],
 )
 
+# The profile Xcode creates when it signs an app with this bundle id
+# ("Automatically manage signing"). It is looked up by name in
+# ~/Library/Developer/Xcode/UserData/Provisioning Profiles. Only device builds
+# use it (the select below), so simulator builds and CI never need one.
+local_provisioning_profile(
+    name = "dev_profile",
+    target_compatible_with = APPLE_TARGET_COMPATIBLE_WITH,
+    profile_name = "iOS Team Provisioning Profile: dev.mashuda.rustcalc",
+)
+
 # Simulator:  bazel build --config=ios_sim //apps/ios:CalculatorIOS   (the default on Apple Silicon)
 # Device:     bazel build --config=ios_device //apps/ios:CalculatorIOS
-#             fails at analysis until `provisioning_profile` is set; rules_apple
-#             refuses to produce an unsigned device build.
+#             then: xcrun devicectl device install app --device <UDID> \
+#                       bazel-bin/apps/ios/CalculatorIOS.ipa
 ios_application(
     name = "CalculatorIOS",
     target_compatible_with = APPLE_TARGET_COMPATIBLE_WITH,
@@ -21,5 +32,9 @@ ios_application(
     families = ["iphone", "ipad"],
     infoplists = ["Info.plist"],
     minimum_os_version = "17.0",
+    provisioning_profile = select({
+        "@apple_support//constraints:device": ":dev_profile",
+        "//conditions:default": None,
+    }),
     deps = [":CalculatorAppLib"],
 )
