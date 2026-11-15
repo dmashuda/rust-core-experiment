@@ -13,12 +13,18 @@ public final class CalculatorModel {
     /// than arriving in every `ViewModel`.
     public let keypad: [KeyRow] = CalcFFI.keypad()
 
-    private let ui: CalculatorUi
+    private let ui: any CalculatorUiProtocol
 
     /// `databasePath` nil keeps history in memory, which is what tests and
     /// previews want. The apps use ``persistent()``.
-    public init(databasePath: String? = nil) {
-        ui = databasePath.map { CalculatorUi.open(dbPath: $0) } ?? CalculatorUi()
+    public convenience init(databasePath: String? = nil) {
+        self.init(ui: databasePath.map { CalculatorUi.open(dbPath: $0) } ?? CalculatorUi())
+    }
+
+    /// Over a `CalculatorUi` made elsewhere. The renderer test wraps the
+    /// real one to see which keys the view reports.
+    public init(ui: any CalculatorUiProtocol) {
+        self.ui = ui
         view = ui.view()
     }
 

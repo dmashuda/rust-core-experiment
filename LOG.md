@@ -1262,3 +1262,81 @@ Findings:
 3. **Measure the explanation.** When the LOG entry needed to explain a
    consolidation runs longer than the code it removed, the consolidation is
    paying for itself in the wrong currency.
+
+## 18. Shared flows and native renderer tests (2026-11-15)
+
+Ported from med-log, a later app built on this repo's architecture, where
+mutation testing showed the gap: the Apple and Android tests drove the class
+the views call, so a dead button or an unwired text field still passed
+`bazel test //...`. The same was true here. The Swift test pressed keys on
+`CalculatorModel`, the Kotlin test called `CalculatorUi`, and only the web
+test went through its renderer. Behaviour was also tested four times over,
+once per platform.
+
+### Flows: behaviour written once
+
+`//core/calc_flows` holds the calculator's behaviour as data: press these
+keys, type these characters, expect this on the display. `:calc_flows_test`
+plays the flows against the Rust view model, and `:flows_json` exports them
+for a driver in each front end. Each driver is about a page:
+
+| Driver | Through |
+| --- | --- |
+| `//apps/web:renderer_test` | the real bundle and a stub DOM: clicks on the real buttons, keydown events, what the page shows. The bundle is imported again per flow (`main.js?load=N`), so each flow gets a new wasm instance and an empty history |
+| `FlowsTests` in `//apps/apple/CalculatorUI:CalculatorUITests` | `CalculatorModel` |
+| `//apps/android:CalcFlowsTest` | `CalculatorUi` on the host JVM, which is what the Android renderer calls |
+
+Calc has no node tree, so a flow addresses the keypad by key id and reads the
+`ViewModel` fields by name (`expression`, `display`, `error`, `history`).
+med-log's `relaunch` step was left out: the web keeps history in memory, so
+the persistence tests stay per platform. The JSON is written by hand in the
+export binary rather than pulling serde into the crate universe for one
+file of test data.
+
+### Renderer tests: the mapping to widgets
+
+One per native platform. Each presses every key from `keypad()` through the
+real widget and checks four things: the key is a button under its id, it
+shows its label, the press reaches Rust with that id, and afterwards the
+expression, display, history and caption show what Rust returned. A wrapper
+around the real `CalculatorUi` records what arrived. A key added to the
+keypad is included without editing either test.
+
+Findings:
+
+1. **SwiftUI's accessibility tree is empty in a headless `xctest` until
+   something asks for it.** Setting the undocumented `AXEnhancedUserInterface`
+   attribute on `NSApp`, as assistive clients do, then `finishLaunching()`,
+   makes it build. After that `NSHostingView` exposes SwiftUI's elements
+   (`AccessibilityNode`), ScrollView contents included. Those elements are
+   `NSObject`s answering the informal NSAccessibility methods, not
+   `NSAccessibilityProtocol` in Swift's eyes, so they are read by key
+   (`value(forKey: "accessibilityIdentifier")`) and pressed with
+   `perform(accessibilityPerformPress)`.
+2. **Spin the run loop only in a synchronous test.** `RunLoop.main.run` inside
+   an `async` XCTest aborts in Swift concurrency's task allocator.
+3. **An identifier on a SwiftUI container spreads to its children** unless the
+   container is `.accessibilityElement(children: .contain)`. Here only the
+   history list needed it.
+4. **Robolectric under Bazel, offline.** Robolectric's framework jar
+   (`android-all-instrumented`, about 150 MB) comes from Maven like any
+   artifact. The test's runner sets `robolectric.offline` and
+   `robolectric.dependency.dir` to that jar's runfiles directory, so nothing
+   is downloaded at test time. The renderer is compiled a second time with
+   `kt_jvm_library`, against `@rules_android//tools/android:android_jar`
+   (neverlink) and the desktop JNA bindings, so the JNA split from section 10
+   holds. `android.jar` must also be on the test's runtime classpath, because
+   `@Config`'s defaults name framework classes outside the sandbox (Gradle
+   does the same). Robolectric's `androidx.test` dependencies are AARs on
+   Google's Maven, and the `aar_import`s rules_jvm_external generates for
+   them work in a JVM test.
+5. **Robolectric 4.17 runs SDK 35 and up only on a Java 21 runtime.**
+   `.bazelrc` pins 17 for rules_android's tools, so the test uses SDK 34. The
+   renderer uses nothing newer.
+
+Mutations each of these catches (all checked): a key button whose action is
+empty, a display or history line not drawn, a key without its id,
+Enter not mapped to `"Enter"` on Android, an ignored key reported as handled,
+and, through the flows, a model that drops presses. Not covered: layout,
+colour, error styling (`is_error` is only colour on Apple), iOS, and the
+Activity's lifecycle.

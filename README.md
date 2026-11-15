@@ -21,6 +21,9 @@ core/calc_ui            Rust: UI view model (keypad, input, keyboard, errors, hi
                         remote
 core/calc_history_sqlite  Rust: the SQLite HistoryStore (rusqlite), the only
                         crate that knows SQLite exists
+core/calc_flows         Rust, test-only: the calculator's behaviour as flows
+                        (press, type, expect), run here and exported as
+                        flows.json for a driver in every front end's test
 bindings/wasm           wasm-bindgen wrapper of calc_ui → JS/TS (web)
 bindings/uniffi         UniFFI wrapper of calc_ui      → Swift (Apple) + Kotlin (Android/JVM)
 tools/uniffi            uniffi-bindgen(-swift) built from source as rust_binary
@@ -36,7 +39,7 @@ apps/android            renderer: Kotlin (plain Views) + android_binary; Rust sh
 
 | Command | What it does |
 | --- | --- |
-| `bazel test //...` | Rust unit tests (evaluator, view model, SQLite store), wasm-in-Node test, web renderer test (bundle + stub DOM), tsc typecheck, Swift XCTest (bindings + UI snapshot), Kotlin JUnit via JNA, APK contents check (the Rust `.so` is inside), dev-server test |
+| `bazel test //...` | Rust unit tests (evaluator, view model, SQLite store), the shared flows on all four runners (see [Tests](#tests)), wasm-in-Node test, web renderer test (bundle + stub DOM), tsc typecheck, Swift XCTest (bindings, renderer, keyboard, UI snapshot), Kotlin JUnit via JNA, Robolectric renderer test, APK contents check (the Rust `.so` is inside), dev-server test |
 | `bazel run //apps/web:serve` | Web app on http://localhost:8080 |
 | `bazel run //apps/macos:CalculatorMac` | Build and launch the macOS app |
 | `bazel build //apps/ios:CalculatorIOS` | iOS simulator `.ipa` |
@@ -86,6 +89,44 @@ profile was found"; run the Xcode project from step 4 on the phone again.
 If Xcode says `dev.mashuda.rustcalc` is not available to your team, choose
 another bundle id and change both `bundle_id` and `profile_name` in
 `apps/ios/BUILD.bazel` to match it.
+
+### Tests
+
+Behaviour is written once, as **flows** in `core/calc_flows/src/flows.rs`:
+
+```rust
+Flow::new("an error keeps the expression, and editing it brings back the last result")
+    .press(&["1", "/", "0", "evaluate"])
+    .error(true)
+    .display("division by zero")
+```
+
+A flow presses keys by id, types on a hardware keyboard, and checks the view
+model's expression, display, error flag and history. The same flows run
+everywhere, the last three from the generated `flows.json`:
+
+| Where | Through |
+| --- | --- |
+| `//core/calc_flows:calc_flows_test` | the Rust view model |
+| `//apps/web:renderer_test` | the real bundle and its DOM: button clicks, keydown events, what the page shows |
+| `//apps/apple/CalculatorUI:CalculatorUITests` | Swift → UniFFI → Rust, through `CalculatorModel` |
+| `//apps/android:CalcFlowsTest` | Kotlin → JNA → Rust, through `CalculatorUi`, on the host JVM |
+
+On Apple and Android the driver works below the views, so each also has a
+**renderer test**. It presses every key on the keypad through its real
+widget and checks four things: the key is a button under its id, it shows
+its label, the press reaches Rust with that id, and the display then shows
+what Rust returned. The keys come from `keypad()`, so a new key is covered
+without editing the test.
+
+| Test | Drives | Does not cover |
+| --- | --- | --- |
+| `RendererTests` in `//apps/apple/CalculatorUI:CalculatorUITests` | The real `CalculatorView` in an offscreen window, through the accessibility tree (what VoiceOver sees). SwiftUI builds that tree only after the app is given the undocumented `AXEnhancedUserInterface` attribute, as an assistive client would set it. Hardware keys are covered by `KeyboardTests`, with real key events. | iOS, layout, colour and error styling (`is_error` is shown only as colour). macOS only, so not in CI. |
+| `//apps/android:RendererTest` | The real `Renderer` (the drawing code, out of `MainActivity`) in a Robolectric Activity on the host JVM, Android 14's framework. Keys are clicked by tag; hardware keys go through `onKeyDown`. | A device: Robolectric has no real drawing, layout or touch dispatch. The Activity's lifecycle. SDK 34 rather than the app's: newer SDKs need a Java 21 runtime, and `.bazelrc` pins 17. |
+
+A platform test is for what only that platform does (persistence paths,
+keyboard events, the web renderer freeing wasm wrappers). Behaviour goes in
+a flow. See LOG.md section 18.
 
 ### Checks
 

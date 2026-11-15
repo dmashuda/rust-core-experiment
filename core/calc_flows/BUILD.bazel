@@ -1,0 +1,46 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+# The calculator's behaviour as test flows: press this, type that, expect
+# this on the display. Written once here, against the key ids of
+# //core/calc_ui's keypad, and run on every platform:
+#
+#   - :calc_flows_test runs them against the Rust view model directly;
+#   - :flows.json is the same flows as data, replayed by a small driver in
+#     each front end's own test through its real bindings (and, on the web,
+#     the real renderer).
+#
+# Test-only: nothing that ships depends on this.
+rust_library(
+    name = "calc_flows",
+    testonly = True,
+    srcs = [
+        "src/flows.rs",
+        "src/lib.rs",
+    ],
+    deps = [
+        "//core/calc_history_sqlite",
+        "//core/calc_ui",
+    ],
+)
+
+rust_test(
+    name = "calc_flows_test",
+    size = "small",
+    crate = ":calc_flows",
+)
+
+rust_binary(
+    name = "export",
+    testonly = True,
+    srcs = ["src/export.rs"],
+    deps = [":calc_flows"],
+)
+
+genrule(
+    name = "flows_json",
+    testonly = True,
+    outs = ["flows.json"],
+    cmd = "$(execpath :export) > $@",
+    tools = [":export"],
+    visibility = ["//apps:__subpackages__"],
+)

@@ -18,6 +18,8 @@ swift_library(
     target_compatible_with = APPLE_TARGET_COMPATIBLE_WITH,
     testonly = True,
     srcs = glob(["tests/*.swift"]),
+    # The shared flows, bundled into the test as flows.json.
+    data = ["//core/calc_flows:flows_json"],
     deps = [":CalculatorUI"],
 )
 

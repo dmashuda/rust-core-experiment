@@ -115,6 +115,8 @@ macos_unit_test(
 kt_jvm_library(
     name = "calc_ffi_kt",
     srcs = [":calc_ffi_kotlin_gen"],
+    # Also the Android renderer's host test and the Kotlin flow driver.
+    visibility = ["//apps/android:__pkg__"],
     deps = ["@maven//:net_java_dev_jna_jna"],
 )
 
@@ -126,6 +128,7 @@ rust_shared_library(
     srcs = ["src/lib.rs"],
     compile_data = ["Cargo.toml"],
     crate_name = "calc_ffi",
+    visibility = ["//apps/android:__pkg__"],
     deps = CALC_FFI_DEPS + select({
         # hermetic-llvm replaces libgcc_s with an empty stub and links
         # libunwind into *executables* only. A .so loaded by a non-Rust

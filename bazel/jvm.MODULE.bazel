@@ -16,9 +16,24 @@ maven.install(
         # which carries libjnidispatch.so for each ABI.)
         "net.java.dev.jna:jna:5.17.0",
         "junit:junit:4.13.2",
+        # The Kotlin driver of the shared flows reads flows.json.
+        "com.google.code.gson:gson:2.13.2",
+        # The Android renderer's test (//apps/android:RendererTest) runs the
+        # real Views on the host JVM. Robolectric supplies the Android
+        # framework from the android-all jar for one SDK level, fetched here
+        # rather than by Robolectric at test time; 4.17 expects exactly this
+        # build for SDK 34 (see DefaultSdkProvider in its jar). SDK 35 and up
+        # need a Java 21 runtime, and .bazelrc pins 17 for rules_android.
+        "org.robolectric:robolectric:4.17",
+        "org.robolectric:android-all-instrumented:14-robolectric-10818077-i7",
     ],
-    # Pinned (versions + sha256). After changing artifacts: bazel run @maven//:pin
+    # Pinned (versions + sha256). After changing artifacts:
+    # REPIN=1 bazel run @maven//:pin
     lock_file = "//:maven_install.json",
-    repositories = ["https://repo1.maven.org/maven2"],
+    repositories = [
+        "https://repo1.maven.org/maven2",
+        # Robolectric's androidx.test dependencies.
+        "https://maven.google.com",
+    ],
 )
 use_repo(maven, "maven")

@@ -1,7 +1,9 @@
 import CalcFFI
 import SwiftUI
 
-/// Renders the Rust `ViewModel`; shared by the macOS and iOS apps.
+/// Renders the Rust `ViewModel`; shared by the macOS and iOS apps. Each key
+/// carries its id as its accessibility identifier, and each part of the
+/// display the name of the `ViewModel` field it shows.
 public struct CalculatorView: View {
     @State private var model: CalculatorModel
     @FocusState private var focused: Bool
@@ -19,11 +21,13 @@ public struct CalculatorView: View {
                 Text(vm.expression.isEmpty ? " " : vm.expression)
                     .font(.title3.monospacedDigit())
                     .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("expression")
                 Text(vm.display)
                     .font(vm.isError ? .title3 : .system(size: 44, weight: .light).monospacedDigit())
                     .foregroundStyle(vm.isError ? .red : .primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.4)
+                    .accessibilityIdentifier("display")
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .textSelection(.enabled)
@@ -38,6 +42,7 @@ public struct CalculatorView: View {
                                     .frame(maxWidth: .infinity, minHeight: 48)
                             }
                             .buttonStyle(KeyButtonStyle(style: key.style))
+                            .accessibilityIdentifier(key.id)
                             .gridCellColumns(Int(key.span))
                         }
                     }
@@ -56,6 +61,8 @@ public struct CalculatorView: View {
                             .font(.callout.monospacedDigit())
                         }
                     }
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("history")
                 }
                 .frame(maxHeight: 120)
             }
@@ -63,6 +70,7 @@ public struct CalculatorView: View {
             Text("\(vm.caption) (UniFFI)")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+                .accessibilityIdentifier("caption")
         }
         .padding(20)
         .focusable()
