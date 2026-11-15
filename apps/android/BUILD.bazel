@@ -1,5 +1,7 @@
 load("@rules_android//rules:rules.bzl", "android_binary")
+load("@rules_java//java:java_import.bzl", "java_import")
 load("@rules_kotlin//kotlin:android.bzl", "kt_android_library")
+load("@rules_kotlin//kotlin:jvm.bzl", "kt_jvm_library", "kt_jvm_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools/android:defs.bzl", "ANDROID_TARGET_COMPATIBLE_WITH")
 
@@ -10,6 +12,86 @@ kt_android_library(
     manifest = "AndroidManifest.xml",
     target_compatible_with = ANDROID_TARGET_COMPATIBLE_WITH,
     deps = ["//bindings/uniffi:calc_ffi_android_kt"],
+)
+
+# The shared flows (//core/calc_flows) played through the bindings the
+# renderer calls (Kotlin -> JNA -> Rust), on the host JVM.
+kt_jvm_test(
+    name = "CalcFlowsTest",
+    size = "small",
+    srcs = ["tests/CalcFlowsTest.kt"],
+    data = [
+        "//bindings/uniffi:calc_ffi_shared",
+        "//core/calc_flows:flows_json",
+    ],
+    env = {
+        "CALC_FFI_LIB": "$(rootpath //bindings/uniffi:calc_ffi_shared)",
+        "CALC_FLOWS": "$(rootpath //core/calc_flows:flows_json)",
+    },
+    test_class = "dev.mashuda.calc.app.CalcFlowsTest",
+    deps = [
+        "//bindings/uniffi:calc_ffi_kt",
+        "@maven//:com_google_code_gson_gson",
+        "@maven//:junit_junit",
+    ],
+)
+
+# The renderer, compiled for the host JVM too: against the SDK's android.jar
+# (stubs, so compile-only) and the desktop JNA bindings, not the AAR ones.
+# At test time Robolectric supplies the real framework classes.
+java_import(
+    name = "android_sdk_stubs",
+    jars = ["@rules_android//tools/android:android_jar"],
+    neverlink = True,
+    target_compatible_with = ANDROID_TARGET_COMPATIBLE_WITH,
+)
+
+java_import(
+    name = "android_sdk_runtime",
+    testonly = True,
+    jars = ["@rules_android//tools/android:android_jar"],
+    target_compatible_with = ANDROID_TARGET_COMPATIBLE_WITH,
+)
+
+kt_jvm_library(
+    name = "renderer_jvm",
+    testonly = True,
+    srcs = ["src/dev/mashuda/calc/app/Renderer.kt"],
+    target_compatible_with = ANDROID_TARGET_COMPATIBLE_WITH,
+    deps = [
+        ":android_sdk_stubs",
+        "//bindings/uniffi:calc_ffi_kt",
+    ],
+)
+
+# Every key, the display and the hardware keys, drawn and handled by the real
+# Renderer in real Views (Robolectric, on the host JVM; no emulator).
+kt_jvm_test(
+    name = "RendererTest",
+    size = "medium",
+    srcs = ["tests/RendererTest.kt"],
+    data = [
+        "//bindings/uniffi:calc_ffi_shared",
+        "@maven//:org/robolectric/android-all-instrumented/14-robolectric-10818077-i7/android-all-instrumented-14-robolectric-10818077-i7.jar",
+    ],
+    env = {
+        "ANDROID_ALL": "$(rootpath @maven//:org/robolectric/android-all-instrumented/14-robolectric-10818077-i7/android-all-instrumented-14-robolectric-10818077-i7.jar)",
+        "CALC_FFI_LIB": "$(rootpath //bindings/uniffi:calc_ffi_shared)",
+    },
+    # Robolectric resolves android.* outside its sandbox too (the defaults of
+    # @Config name framework classes), as Gradle's unit tests do: put the
+    # stubs on the classpath. Inside the sandbox they come from android-all.
+    runtime_deps = [":android_sdk_runtime"],
+    target_compatible_with = ANDROID_TARGET_COMPATIBLE_WITH,
+    test_class = "dev.mashuda.calc.app.RendererTest",
+    deps = [
+        ":renderer_jvm",
+        "//bindings/uniffi:calc_ffi_kt",
+        "@maven//:junit_junit",
+        "@maven//:org_robolectric_annotations",
+        "@maven//:org_robolectric_robolectric",
+        "@maven//:org_robolectric_shadows_framework",
+    ],
 )
 
 # `adb install bazel-bin/apps/android/calc_android.apk`. The Rust code ships

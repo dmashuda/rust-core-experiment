@@ -1,6 +1,8 @@
-// Drives the real bundled renderer (//apps/web:bundle) against a minimal DOM,
-// so the wiring main.ts does -- building the keypad once, delegating clicks,
-// and freeing the wasm wrappers it is handed -- is covered by a test.
+// Drives the real bundled renderer (//apps/web:bundle) against a minimal DOM:
+// first the shared flows (//core/calc_flows:flows.json), clicking the real
+// buttons and reading what the page shows, then what only the web renderer
+// does -- building the keypad once, delegating clicks, and freeing the wasm
+// wrappers it is handed.
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
@@ -49,21 +51,85 @@ function dispatch(target, type, event = {}) {
   }
 }
 
-const ids = ["expr", "result", "keys", "history", "caption"];
-const els = Object.fromEntries(ids.map((id) => [id, new El("div")]));
-const doc = new El("document");
-globalThis.document = {
-  getElementById: (id) => els[id],
-  createElement: (tag) => new El(tag),
-  addEventListener: (type, fn) => doc.addEventListener(type, fn),
-};
 // The bundle loads the wasm by URL; Node's fetch does not do file: URLs.
 globalThis.fetch = async (url) =>
   new Response(await readFile(url), { headers: { "content-type": "application/wasm" } });
 
-await import(new URL("./site/main.js", import.meta.url));
+/// A fresh page: new elements, and the bundle run again over them (a new
+/// module instance, so a new wasm instance and a new calculator).
+let loads = 0;
+async function load() {
+  const ids = ["expr", "result", "keys", "history", "caption"];
+  const els = Object.fromEntries(ids.map((id) => [id, new El("div")]));
+  const doc = new El("document");
+  globalThis.document = {
+    getElementById: (id) => els[id],
+    createElement: (tag) => new El(tag),
+    addEventListener: (type, fn) => doc.addEventListener(type, fn),
+  };
+  await import(new URL(`./site/main.js?load=${loads++}`, import.meta.url));
+  const press = (id) => {
+    const button = els.keys.children.find((b) => b.dataset.id === id);
+    if (button) dispatch(button, "click");
+    return button !== undefined;
+  };
+  /// Whether the page took the key (called preventDefault).
+  const key = (key) => {
+    let taken = false;
+    dispatch(doc, "keydown", { key, metaKey: false, ctrlKey: false, altKey: false, preventDefault: () => (taken = true) });
+    return taken;
+  };
+  return { ...els, press, key };
+}
 
-const { expr, result, keys, history, caption } = els;
+// ------------------------------------------------------------ the flows --
+
+/// What the page shows for a flow's `field`.
+function read(page, field) {
+  switch (field) {
+    case "expression":
+      return page.expr.textContent;
+    case "display":
+      return page.result.textContent;
+    case "error":
+      return String(page.result.classList.contains("error"));
+    case "history":
+      return page.history.children.map((li) => li.text).join("\n");
+    default:
+      return `unknown field ${field}`;
+  }
+}
+
+async function play(flow) {
+  const page = await load();
+  for (const [index, step] of flow.steps.entries()) {
+    const place = `"${flow.name}", step ${index + 1} (${JSON.stringify(step)})`;
+    switch (step.op) {
+      case "press":
+        assert.ok(page.press(step.id), `${place}: no such button`);
+        break;
+      case "key":
+        assert.ok(page.key(step.key), `${place}: the page ignored it`);
+        break;
+      case "ignored":
+        assert.ok(!page.key(step.key), `${place}: the page took it`);
+        break;
+      case "expect":
+        assert.equal(read(page, step.field), step.value, place);
+        break;
+      default:
+        assert.fail(`${place}: unknown step`);
+    }
+  }
+}
+
+const flows = JSON.parse(await readFile(new URL("../../core/calc_flows/flows.json", import.meta.url), "utf8"));
+assert.ok(flows.length > 0);
+for (const flow of flows) await play(flow);
+
+// --------------------------------------------------------- only the web --
+
+const { keys, history, caption, expr, press } = await load();
 
 // The keypad is built once, from the static keypad() call.
 assert.equal(keys.children.length, 23, "every key has a button");
@@ -73,17 +139,9 @@ assert.equal(keys.children.at(-1).style.gridColumn, "span 2");
 assert.equal(keys.style.gridTemplateColumns, "repeat(4, 1fr)", "the grid width comes from Rust, not CSS");
 assert.match(caption.textContent, /WebAssembly/);
 const buttonsBefore = [...keys.children];
-const press = (id) => dispatch(keys.children.find((b) => b.dataset.id === id), "click");
-
-// Clicks arrive through the one delegated listener on #keys.
-for (const id of ["6", "*", "7"]) press(id);
-assert.equal(expr.textContent, "6*7");
-press("evaluate");
-assert.equal(result.textContent, "42");
-assert.equal(history.children.length, 1);
-assert.equal(history.children[0].text, "6*7 = 42");
 
 // Re-rendering must not rebuild the 23 buttons, nor the unchanged history.
+for (const id of ["6", "*", "7", "evaluate"]) press(id);
 assert.deepEqual(
   keys.children.map((b, i) => b === buttonsBefore[i]),
   buttonsBefore.map(() => true),
@@ -93,27 +151,9 @@ const historyRow = history.children[0];
 press("1");
 assert.equal(history.children[0], historyRow, "an unchanged history list is left alone");
 
-// An operator after "=" continues from the answer; errors clear on edit.
-press("backspace");
-for (const id of ["+", "1", "evaluate"]) press(id);
-assert.equal(result.textContent, "43");
-for (const id of ["1", "/", "0", "evaluate"]) press(id);
-assert.equal(result.textContent, "division by zero");
-assert.ok(result.classList.contains("error"));
-press("backspace");
-assert.equal(result.textContent, "43", "the error text does not linger as a result");
-assert.ok(!result.classList.contains("error"));
-
-// Hardware keys go through the same path.
-dispatch(doc, "keydown", { key: "Escape", metaKey: false, ctrlKey: false, altKey: false });
-assert.equal(expr.textContent, "");
-for (const key of "8*8") dispatch(doc, "keydown", { key, metaKey: false, ctrlKey: false, altKey: false });
-dispatch(doc, "keydown", { key: "Enter", metaKey: false, ctrlKey: false, altKey: false });
-assert.equal(result.textContent, "64");
-
 // Many presses, each handed a fresh ViewModel that render() frees: if a free
 // were wrong or missing a pointer would be reused and wasm would throw here.
 for (let i = 0; i < 500; i++) press("1");
-assert.equal(expr.textContent.length, 500);
+assert.equal(expr.textContent.length, 501);
 
-console.log("web renderer OK");
+console.log(`web renderer OK: ${flows.length} flows`);

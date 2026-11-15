@@ -5,17 +5,6 @@ import XCTest
 
 @MainActor
 final class CalculatorUITests: XCTestCase {
-    /// The Swift side only forwards input; this checks the wiring, not the
-    /// calculator logic (that is tested once, in Rust: //core/calc_ui).
-    func testModelForwardsToRust() {
-        let model = CalculatorModel()
-        for id in ["2", "*", "(", "3", "+", "4", ")", "^", "2", "evaluate"] { model.press(id) }
-        XCTAssertEqual(model.view.display, "98")
-        XCTAssertTrue(model.keyInput("1"))
-        XCTAssertFalse(model.keyInput("Tab"))
-        XCTAssertEqual(model.view.expression, "1")
-    }
-
     /// The keypad is static state the model fetches once; history rows carry
     /// ids so their view identity survives newer rows being prepended.
     func testKeypadIsFetchedOnceAndHistoryRowsKeepTheirIdentity() {

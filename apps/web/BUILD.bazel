@@ -56,11 +56,15 @@ copy_to_directory(
     visibility = ["//visibility:public"],
 )
 
-# Runs the bundled renderer against a minimal DOM (see the test file).
+# Plays the shared flows through the bundled renderer against a minimal DOM,
+# then checks what only the web renderer does (see the test file).
 js_test(
     name = "renderer_test",
     size = "small",
-    data = [":site"],
+    data = [
+        ":site",
+        "//core/calc_flows:flows_json",
+    ],
     entry_point = "main.test.mjs",
 )
 
